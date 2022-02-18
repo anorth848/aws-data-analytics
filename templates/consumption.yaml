@@ -1,0 +1,72 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Consumption stack for reporting
+  Note: This stack assumes
+    1. You've enabled quicksight in the account and that the quicksight service role exists
+
+Parameters:
+  UseCase:
+    Type: String
+    AllowedPattern: "[a-z_]+"
+
+  ParentStack:
+    Type: String
+    Description: Parent stack this template was launched from, used for naming SSM parameters
+
+Resources:
+  AthenaAnalystWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !Sub '${UseCase}-Analyst'
+      Description: Workgroup for Analysts
+      RecursiveDeleteOption: False
+      State: ENABLED
+      WorkGroupConfiguration:
+        PublishCloudWatchMetricsEnabled: TRUE
+        EnforceWorkGroupConfiguration: TRUE
+        ResultConfiguration:
+          EncryptionConfiguration:
+            EncryptionOption: SSE_S3
+          OutputLocation: !Sub 's3://aws-athena-query-results-${AWS::Region}-${AWS::AccountId}/${UseCase}/'
+      WorkGroupConfigurationUpdates: !Ref AWS::NoValue
+
+  QuickSightLakeDbPermissions:
+    Type: AWS::LakeFormation::Permissions
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !Sub 'arn:aws:iam::${AWS::AccountId}:role/service-role/aws-quicksight-service-role-v0'
+      Permissions:
+        - DESCRIBE
+      Resource:
+        DatabaseResource:
+          CatalogId: !Ref AWS::AccountId
+          Name: !Ref UseCase
+
+  QuickSightTablePermissions:
+    Type: AWS::LakeFormation::Permissions
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !Sub 'arn:aws:iam::${AWS::AccountId}:role/service-role/aws-quicksight-service-role-v0'
+      Permissions:
+        - DESCRIBE
+        - SELECT
+      Resource:
+        TableResource:
+          CatalogId: !Ref AWS::AccountId
+          DatabaseName: !Ref UseCase
+          TableWildcard: { }
+
+  AthenaDataSource:
+    Type: AWS::QuickSight::DataSource
+    DependsOn: [ AthenaAnalystWorkGroup ]
+    Properties:
+      Name: !Sub 'Athena-Analyst-{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
+      AwsAccountId: !Sub '${AWS::AccountId}'
+      DataSourceId: !Join ['-', [ !Ref ParentStack, !Ref UseCase ] ]
+      DataSourceParameters:
+        AthenaParameters:
+          Workgroup: !Ref AthenaAnalystWorkGroup
+      SslProperties:
+        DisableSsl: FALSE
+      Type: ATHENA

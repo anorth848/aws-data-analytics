@@ -1,0 +1,238 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Infrastructure components required for AWS DMS
+
+Parameters:
+  ParentStack:
+    Type: String
+    Description: Parent stack this template was launched from, used for naming SSM parameters
+
+  UseCase:
+    Type: String
+    AllowedPattern: "[a-z_]+"
+
+  CreateDmsVpcRole:
+    Type: String
+    Description: Whether or not to create the DMS VPC Role
+    AllowedValues: [ 'TRUE', 'FALSE' ]
+    Default: 'FALSE'
+
+Conditions:
+  CreateDmsVpcRole: !Equals [ !Ref CreateDmsVpcRole, 'TRUE' ]
+
+Resources:
+  #  If DMS has not been previously used in this account, you will need to create the dms-vpc-role or DMS resources in this stack will fail
+  #  With error: The IAM Role arn:aws:iam::${AccountId}:role/dms-vpc-role is not configured properly.
+  #  This can be done through the GUI by manually configuring a Subnet group, or
+  #  by Parameter CreateDmsVpcRole=TRUE in this template. If the role already exists, just set this to FALSE
+  #  If DMS has not been previously used in this account, you will need to create the dms-vpc-role or DMS resources in this stack will fail
+  #  With error: The IAM Role arn:aws:iam::831275422924:role/dms-vpc-role is not configured properly.
+  #  This can be done through the GUI by manually configuring a Subnet group, or
+  #  by Parameter CreateDmsVpcRole=TRUE in template runtime-infrastructure.yaml. If the role already exists, just set this to FALSE
+  DmsVpcRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    Condition: CreateDmsVpcRole
+    Properties:
+      RoleName: dms-vpc-role
+      AssumeRolePolicyDocument: {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "dms.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole" ]
+          }
+        ]
+      }
+      Description: VPC Service role for DMS
+      ManagedPolicyArns:
+        - !Sub 'arn:aws:iam::aws:policy/service-role/AmazonDMSVPCManagementRole'
+
+  DmsSubnetGroup:
+    Type: AWS::DMS::ReplicationSubnetGroup
+    Properties:
+      ReplicationSubnetGroupDescription: Replication group for private subnets A and B
+      SubnetIds:
+        - !Sub '{{resolve:ssm:/${ParentStack}/network/subnet/a/id}}'
+        - !Sub '{{resolve:ssm:/${ParentStack}/network/subnet/b/id}}'
+
+  RdsCertificate:
+    #  Default to the us-east-1 rds cert bundle
+    #  https://truststore.pki.rds.amazonaws.com/us-east-1/us-east-1-bundle.pem
+    #  Update for your region
+    #  openssl crl2pkcs7 -nocrl -certfile ~/Downloads/us-east-1-bundle.pem | openssl pkcs7 -print_certs | grep -Ev '(^$|subject|issuer)'
+    #  Unfortunately, Cloudformation cannot parameterize this as the text of the certificate chain is greater than 4096 characters
+    Type: AWS::DMS::Certificate
+    Properties:
+      CertificatePem: |-
+        -----BEGIN CERTIFICATE-----
+        MIIEBjCCAu6gAwIBAgIJAMc0ZzaSUK51MA0GCSqGSIb3DQEBCwUAMIGPMQswCQYDVQQGEwJVUzEQMA4GA1UEBwwHU2VhdHRsZTETMBEGA1UECAwKV2FzaGluZ3RvbjEiMCAGA1UECgwZQW1hem9uIFdlYiBTZXJ2aWNlcywgSW5jLjETMBEGA1UECwwKQW1hem9uIFJEUzEgMB4GA1UEAwwXQW1hem9uIFJEUyBSb290IDIwMTkgQ0EwHhcNMTkwODIyMTcwODUwWhcNMjQwODIyMTcwODUwWjCBjzELMAkGA1UEBhMCVVMxEDAOBgNVBAcMB1NlYXR0bGUxEzARBgNVBAgMCldhc2hpbmd0b24xIjAgBgNVBAoMGUFtYXpvbiBXZWIgU2VydmljZXMsIEluYy4xEzARBgNVBAsMCkFtYXpvbiBSRFMxIDAeBgNVBAMMF0FtYXpvbiBSRFMgUm9vdCAyMDE5IENBMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArXnF/E6/Qh+ku3hQTSKPMhQQlCpoWvnIthzX6MK3p5a0eXKZoWIjYcNNG6UwJjp4fUXl6glp53Jobn+tWNX88dNH2n8DVbppSwScVE2LpuL+94vY0EYE/XxN7svKea8YvlrqkUBKyxLxTjh+U/KrGOaHxz9v0l6ZNlDbuaZw3qIWdD/I6aNbGeRUVtpM6P+bWIoxVl/caQylQS6CEYUk+CpVyJSkopwJlzXT07tMoDL5WgX9O08KVgDNz9qP/IGtAcRduRcNioH3E9v981QO1zt/Gpb2f8NqAjUUCUZzOnij6mx9McZ+9cWX88CRzR0vQODWuZscgI08NvM69Fn2SQIDAQABo2MwYTAOBgNVHQ8BAf8EBAMCAQYwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQUc19g2LzLA5j0Kxc0LjZapmD/vB8wHwYDVR0jBBgwFoAUc19g2LzLA5j0Kxc0LjZapmD/vB8wDQYJKoZIhvcNAQELBQADggEBAHAG7WTmyjzPRIM85rVj+fWHsLIvqpw6DObIjMWokpliCeMINZFVynfgBKsf1ExwbvJNzYFXW6dihnguDG9VMPpi2up/ctQTN8tm9nDKOy08uNZoofMcNUZxKCEkVKZv+IL4oHoeayt8egtv3ujJM6V14AstMQ6SwvwvA93EP/Ug2e4WAXHucbI1NAbUgVDqp+DRdfvZkgYKryjTWd/0+1fS8X1bBZVWzl7eirNVnHbSH2ZDpNuY0SBd8dj5F6ld3t58ydZbrTHze7JJOd8ijySAp4/kiu9UfZWuTPABzDa/DSdz9Dk/zPW4CXXvhLmE02TA9/HeCw3KEHIwicNuEfw=
+        -----END CERTIFICATE-----
+        -----BEGIN CERTIFICATE-----
+        MIIEBzCCAu+gAwIBAgICJVUwDQYJKoZIhvcNAQELBQAwgY8xCzAJBgNVBAYTAlVTMRAwDgYDVQQHDAdTZWF0dGxlMRMwEQYDVQQIDApXYXNoaW5ndG9uMSIwIAYDVQQKDBlBbWF6b24gV2ViIFNlcnZpY2VzLCBJbmMuMRMwEQYDVQQLDApBbWF6b24gUkRTMSAwHgYDVQQDDBdBbWF6b24gUkRTIFJvb3QgMjAxOSBDQTAeFw0xOTA5MTkxODE2NTNaFw0yNDA4MjIxNzA4NTBaMIGUMQswCQYDVQQGEwJVUzETMBEGA1UECAwKV2FzaGluZ3RvbjEQMA4GA1UEBwwHU2VhdHRsZTEiMCAGA1UECgwZQW1hem9uIFdlYiBTZXJ2aWNlcywgSW5jLjETMBEGA1UECwwKQW1hem9uIFJEUzElMCMGA1UEAwwcQW1hem9uIFJEUyB1cy1lYXN0LTEgMjAxOSBDQTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAM3i/k2u6cqbMdcISGRvh+m+L0yaSIoOXjtpNEoIftAipTUYoMhLInXGlQBVA4shkekxp1N7HXe1Y/iMaPEyb3n+16pf3vdjKl7kaSkIhjdUz3oVUEYti8Z/XeJJ9H2aEGuiZh3kHixQcZczn8cg3dA9aeeyLSEnTkl/npzLf//669AmmyhsXcAo58yvT0D4E0D/EEHf2N7HRX7j/TlyWvw/39SW0usiCrHPKDLxByLojxLdHzsoQIp/S04m+eWn6rmD+uUiRteN1hI5ncQiA3wo4G37mHnUEKo6TtTUh+sd/ku6a8HKglMBcgqudDI90s1OpuIAWmuWpY//8xEG2YECAwEAAaNmMGQwDgYDVR0PAQH/BAQDAgEGMBIGA1UdEwEB/wQIMAYBAf8CAQAwHQYDVR0OBBYEFPqhoWZcrVY9mU7tuemRRBnQIj1jMB8GA1UdIwQYMBaAFHNfYNi8ywOY9CsXNC42WqZg/7wfMA0GCSqGSIb3DQEBCwUAA4IBAQB6zOLZ+YINEs72heHIWlPZ8c6WY8MDU+Be5w1M+BK2kpcVhCUKPJO4nMXpgamEX8DIiaO7emsunwJzMSvavSPRnxXXTKIc0i/g1EbiDjnYX9d85DkCE1LaAUCmCZBVi9fIe0H2r9whIh4uLWZA41oMnJx/MOmo3XyMfQoWcqaSFlMqfZM40rNoB/tdHLNuV4eIdaw2mlHxdWDtF4oH+HFm+2cVBUVC1jXKrFv/euRVtsTT+A6ih2XBHKxQ1Y4HgAn0jACP2QSPEmuoQEIa57bEKEcZsBR8SDY6ZdTd2HLRIApcCOSFMRM8CKLeF658I0XgF8D5EsYoKPsA+74Z+jDH
+        -----END CERTIFICATE-----
+        -----BEGIN CERTIFICATE-----
+        MIID/zCCAuegAwIBAgIRAPVSMfFitmM5PhmbaOFoGfUwDQYJKoZIhvcNAQELBQAwgZcxCzAJBgNVBAYTAlVTMSIwIAYDVQQKDBlBbWF6b24gV2ViIFNlcnZpY2VzLCBJbmMuMRMwEQYDVQQLDApBbWF6b24gUkRTMQswCQYDVQQIDAJXQTEwMC4GA1UEAwwnQW1hem9uIFJEUyB1cy1lYXN0LTEgUm9vdCBDQSBSU0EyMDQ4IEcxMRAwDgYDVQQHDAdTZWF0dGxlMCAXDTIxMDUyNTIyMzQ1N1oYDzIwNjEwNTI1MjMzNDU3WjCBlzELMAkGA1UEBhMCVVMxIjAgBgNVBAoMGUFtYXpvbiBXZWIgU2VydmljZXMsIEluYy4xEzARBgNVBAsMCkFtYXpvbiBSRFMxCzAJBgNVBAgMAldBMTAwLgYDVQQDDCdBbWF6b24gUkRTIHVzLWVhc3QtMSBSb290IENBIFJTQTIwNDggRzExEDAOBgNVBAcMB1NlYXR0bGUwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDu9H7TBeGoDzMrdxN6H8COntJX4IR6dbyhnj5qMD4xl/IWvp50lt0VpmMd+z2PNZzx8RazeGC5IniV5nrLg0AKWRQ2A/lGGXbUrGXCSe09brMQCxWBSIYe1WZZ1iU1IJ/6Bp4D2YEHpXrWbPkOq5x3YPcsoitgm1Xh8ygz6vb7PsvJvPbvRMnkDg5IqEThapPjmKb8ZJWyEFEEQRrkCIRueB1EqQtJw0fvP4PKDlCJAKBEs/y049FoOqYpT3pRy0WKqPhWve+hScMd6obq8kxTFy1IHACjHc51nrGII5Bt76/MpTWhnJIJrCnq1/Uc3Qs8IVeb+sLaFC8KDI69Sw6bAgMBAAGjQjBAMA8GA1UdEwEB/wQFMAMBAf8wHQYDVR0OBBYEFE7PCoptlyOgtXX0Y1lObBUxuKaCMA4GA1UdDwEB/wQEAwIBhjANBgkqhkiG9w0BAQsFAAOCAQEAFj+bX8gLmMNefr5jRJfHjrL3iuZCjf7YEZgn89pS4z8408mjj9z6Q5D1H7ySjNETVV8QaJip1qyhh5gRzRaArgGAYvi2/r0zPsy+Tgf7v1KGL5Lh8NT8iCEGGXwFg3Ir+Nl3e+9XUp0eyyzBIjHtjLBm6yy8rGk9p6OtFDQnKF5OxwbAgip42CD75r/qp421maEDDvvRFR4D+99JZxgAYDBGqRRceUoe16qDzbMvlz0A9paCZFclxeftAxv6QlR5rItMz/XdzpBJUpYhdzM0gCzAzdQuVO5tjJxmXhkSMcDP+8Q+Uv6FA9k2VpUVE/O5jgpqUJJ2Hc/5rs9VkAPXeA==
+        -----END CERTIFICATE-----
+        -----BEGIN CERTIFICATE-----
+        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
+        -----END CERTIFICATE-----
+        -----BEGIN CERTIFICATE-----
+        MIICrjCCAjSgAwIBAgIRAPAlEk8VJPmEzVRRaWvTh2AwCgYIKoZIzj0EAwMwgZYxCzAJBgNVBAYTAlVTMSIwIAYDVQQKDBlBbWF6b24gV2ViIFNlcnZpY2VzLCBJbmMuMRMwEQYDVQQLDApBbWF6b24gUkRTMQswCQYDVQQIDAJXQTEvMC0GA1UEAwwmQW1hem9uIFJEUyB1cy1lYXN0LTEgUm9vdCBDQSBFQ0MzODQgRzExEDAOBgNVBAcMB1NlYXR0bGUwIBcNMjEwNTI1MjI0MTU1WhgPMjEyMTA1MjUyMzQxNTVaMIGWMQswCQYDVQQGEwJVUzEiMCAGA1UECgwZQW1hem9uIFdlYiBTZXJ2aWNlcywgSW5jLjETMBEGA1UECwwKQW1hem9uIFJEUzELMAkGA1UECAwCV0ExLzAtBgNVBAMMJkFtYXpvbiBSRFMgdXMtZWFzdC0xIFJvb3QgQ0EgRUNDMzg0IEcxMRAwDgYDVQQHDAdTZWF0dGxlMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEx5xjrup8II4HOJw15NTnS3H5yMrQGlbjEDA5MMGnE9DmHp5dACIxmPXPMe/99nO7wNdl7G71OYPCgEvWm0FhdvVUeTb3LVnVBnaXt32Ek7/oxGk1T+Df03C+W0vmuJ+wo0IwQDAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBTGXmqBWN/1tkSea4pNw0oHrjk2UDAOBgNVHQ8BAf8EBAMCAYYwCgYIKoZIzj0EAwMDaAAwZQIxAIqqZWCSrIkZ7zsv/FygtAusW6yvlL935YAWYPVXU30mjkMFLM+/RJ9GMvnO8jHfCgIwB+whlkcItzE9CRQ6CsMo/d5cEHDUu/QW6jSIh9BROGh9pTYPVkUbBiKPA7lVVhre
+        -----END CERTIFICATE-----
+
+  DmsRdsEndpoint:
+    Type: AWS::DMS::Endpoint
+    Properties:
+      ResourceIdentifier: !Sub '${ParentStack}-rds'
+      CertificateArn: !Ref RdsCertificate
+      DatabaseName: !Sub '{{resolve:secretsmanager:${ParentStack}/rdbms/rds/primary/dms:SecretString:dbname}}'
+      EndpointType: source
+      EngineName: !Sub '{{resolve:secretsmanager:${ParentStack}/rdbms/rds/primary/dms:SecretString:engine}}'
+      ExtraConnectionAttributes: >
+        captureDDLs=N;pluginName=PGLOGICAL;heartbeatEnable=true;heartbeatSchema=awsdms
+      Password: !Sub '{{resolve:secretsmanager:${ParentStack}/rdbms/rds/primary/dms:SecretString:password}}'
+      Port: !Sub '{{resolve:secretsmanager:${ParentStack}/rdbms/rds/primary/dms:SecretString:port}}'
+      ServerName: !Sub '{{resolve:secretsmanager:${ParentStack}/rdbms/rds/primary/dms:SecretString:host}}'
+      SslMode: verify-ca
+      Username: !Sub '{{resolve:secretsmanager:${ParentStack}/rdbms/rds/primary/dms:SecretString:username}}'
+
+  DmsS3EndpointRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "dms.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole" ]
+          }
+        ]
+      }
+      Description: Role for DMS to Assume when writing to S3
+      Policies:
+        - PolicyName: DMS-S3
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: ListAll
+                Effect: Allow
+                Action:
+                  - s3:ListAllMybuckets
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::*'
+              - Sid: ListBucket
+                Effect: Allow
+                Action:
+                  - s3:List*
+                  - s3:Get*
+                Resource:
+                  - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/bronze/arn}}'
+              - Sid: S3ObjectAccess
+                Effect: Allow
+                Action:
+                  - s3:*Object*
+                Resource:
+                  - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/bronze/arn}}/${UseCase}/incremental'
+                  - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/bronze/arn}}/${UseCase}/incremental/'
+                  - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/bronze/arn}}/${UseCase}/incremental/*'
+
+  DmsLakeDbPermissions:
+    Type: AWS::LakeFormation::Permissions
+    DependsOn: DmsS3EndpointRole
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !GetAtt DmsS3EndpointRole.Arn
+      Permissions:
+        - ALL
+      Resource:
+        DatabaseResource:
+          CatalogId: !Ref AWS::AccountId
+          Name: !Join ['', [ '{{resolve:ssm:/', !Ref ParentStack, '/lake/glue/db/name', '}}' ] ]
+
+  DmsLakeLocationPermissions:
+    Type: AWS::LakeFormation::Permissions
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !GetAtt DmsS3EndpointRole.Arn
+      Permissions:
+        - DATA_LOCATION_ACCESS
+      Resource:
+        DataLocationResource:
+          CatalogId: !Ref AWS::AccountId
+          S3Resource: !Join ["/", [
+              !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/bronze/arn}}',
+              !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
+          ] ]
+
+  DmsLakeTablePermissions:
+    Type: AWS::LakeFormation::Permissions
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !GetAtt DmsS3EndpointRole.Arn
+      Permissions:
+        - ALL
+      Resource:
+        TableResource:
+          CatalogId: !Ref AWS::AccountId
+          DatabaseName: !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
+          TableWildcard: {}
+
+  DmsS3Endpoint:
+    Type: AWS::DMS::Endpoint
+    Properties:
+      EndpointType: target
+      EngineName: s3
+      ResourceIdentifier: !Sub '${ParentStack}-s3'
+      S3Settings:
+        BucketName: !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/bronze/name}}'
+        BucketFolder: !Sub '${UseCase}/incremental/{{resolve:secretsmanager:${ParentStack}/rdbms/rds/primary/dms:SecretString:dbname}}/'
+        ServiceAccessRoleArn: !GetAtt DmsS3EndpointRole.Arn
+        CompressionType: gzip
+      ExtraConnectionAttributes: >
+        dataFormat=parquet;datePartitionEnabled=true;datePartitionDelimiter=NONE;parquetTimestampInMillisecond=true;cdcMinFileSize=131072;cdcMaxBatchInterval=180;
+  RdsCertificateArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: DMS VPC Endpoint ID
+      Name: !Sub '/${ParentStack}/dms/rds_cert/arn'
+      Type: String
+      Value: !Ref RdsCertificate
+
+  DmsSubnetGroupNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: DMS VPC Endpoint ID
+      Name: !Sub '/${ParentStack}/dms/subnet_group/name'
+      Type: String
+      Value: !Ref DmsSubnetGroup
+
+  DmsRdsEndpointArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: DMS RDS Endpoint ARN
+      Name: !Sub '/${ParentStack}/dms/endpoint/rds/arn'
+      Type: String
+      Value: !Ref DmsRdsEndpoint
+
+  DmsS3EndpointArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: DMS RDS Endpoint ARN
+      Name: !Sub '/${ParentStack}/dms/endpoint/s3/arn'
+      Type: String
+      Value: !Ref DmsS3Endpoint
+
+  DmsS3EndpointRoleId:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: DMS S3 Endpoint Role ID
+      Name: !Sub '/${ParentStack}/dms/iam/endpoint_s3/role_id'
+      Type: String
+      Value: !GetAtt DmsS3EndpointRole.RoleId

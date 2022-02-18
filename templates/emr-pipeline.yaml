@@ -1,0 +1,386 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  This stack contains all components for EMR Datalake pipeline
+
+Parameters:
+  ParentStack:
+    Type: String
+    Description: Parent stack this template was launched from, used for naming SSM parameters
+
+  # For more information about EMR IAM roles: https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-iam-roles.html
+  EmrServiceRole:
+    Type: String
+    Default: "EMR_DefaultRole"
+    Description: Service role for EMR clusters
+
+  CreateLambdaInVpc:
+    Type: String
+    AllowedValues: [ 'TRUE', 'FALSE' ]
+    Default: 'TRUE'
+
+  IncrementalSchedule:
+    Type: String
+    Description: The schedule expression for the Hudi incremental jobs
+
+  UseCase:
+    Type: String
+    AllowedPattern: "[a-z_]+"
+    Description: The use case. This will be used for naming resources throughout nested stacks.
+
+
+Conditions:
+  CreateLambdaInVpc: !Equals
+    - !Ref CreateLambdaInVpc
+    - 'TRUE'
+
+Resources:
+  EmrEc2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "ec2.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole" ]
+          }
+        ]
+      }
+      Description: Role for EMR EC2 instances
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonElasticMapReduceforEC2Role
+      MaxSessionDuration: 43200
+      Policies:
+        - PolicyName: FullLoadPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: Secrets
+                Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ParentStack}/*'
+
+  EmrEc2InstanceProfile:
+    DependsOn: EmrEc2Role
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Ref EmrEc2Role
+      Roles:
+        - !Ref EmrEc2Role
+
+  EmrLakeDbPermissions:
+    Type: AWS::LakeFormation::Permissions
+    DependsOn: EmrEc2Role
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !GetAtt EmrEc2Role.Arn
+      Permissions:
+        - ALL
+      Resource:
+        DatabaseResource:
+          CatalogId: !Ref AWS::AccountId
+          Name: !Join ['', [ '{{resolve:ssm:/', !Ref ParentStack, '/lake/glue/db/name', '}}' ] ]
+
+  EmrBronzeLakeLocationPermissions:
+    Type: AWS::LakeFormation::Permissions
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${EmrEc2Role}'
+      Permissions:
+        - DATA_LOCATION_ACCESS
+      Resource:
+        DataLocationResource:
+          CatalogId: !Ref AWS::AccountId
+          S3Resource: !Join ["/", [
+              !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/bronze/arn}}',
+              !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
+          ] ]
+
+  EmrSilverLakeLocationPermissions:
+    Type: AWS::LakeFormation::Permissions
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${EmrEc2Role}'
+      Permissions:
+        - DATA_LOCATION_ACCESS
+      Resource:
+        DataLocationResource:
+          CatalogId: !Ref AWS::AccountId
+          S3Resource: !Join ["/", [
+              !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/silver/arn}}',
+              !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
+          ] ]
+
+  EmrGoldLakeLocationPermissions:
+    Type: AWS::LakeFormation::Permissions
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${EmrEc2Role}'
+      Permissions:
+        - DATA_LOCATION_ACCESS
+      Resource:
+        DataLocationResource:
+          CatalogId: !Ref AWS::AccountId
+          S3Resource: !Join ["/", [
+              !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/gold/arn}}',
+              !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
+          ] ]
+
+  EmrLakeTablePermissions:
+    Type: AWS::LakeFormation::Permissions
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${EmrEc2Role}'
+      Permissions:
+        - ALL
+      Resource:
+        TableResource:
+          CatalogId: !Ref AWS::AccountId
+          DatabaseName: !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
+          TableWildcard: {}
+
+  EmrStepFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "states.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole"]
+          }
+        ]
+      }
+      Description: Role for EMR pipeline state machine
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEMRFullAccessPolicy_v2
+      MaxSessionDuration: 43200
+      Policies:
+        - PolicyName: Inline
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: PassRole
+                Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !GetAtt EmrEc2Role.Arn
+              - Sid: AllowSns
+                Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Sub '{{resolve:ssm:/${ParentStack}/runtime/sns/topic/arn}}'
+
+  EmrStepFunction:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: ../src/stepfunctions/emr.json
+      DefinitionSubstitutions:
+        ArtifactPrefixUri: !Join ['', [ '{{resolve:ssm:/', !Ref ParentStack, '/cicd/artifact_bucket/prefix_uri', '}}' ] ]
+        EmrEc2SubnetIdA: !Sub '{{resolve:ssm:/${ParentStack}/network/subnet/a/id}}'
+        EmrEc2SubnetIdB: !Sub '{{resolve:ssm:/${ParentStack}/network/subnet/b/id}}'
+        EmrLogUri: !Sub 's3n://aws-logs-${AWS::AccountId}-${AWS::Region}/elasticmapreduce/${ParentStack}/'
+        EmrServiceRole: !Ref EmrServiceRole
+        EmrJobFlowRole: !Ref EmrEc2InstanceProfile
+        RuntimeSnsTopicArn: !Sub '{{resolve:ssm:/${ParentStack}/runtime/sns/topic/arn}}'
+        SilverLakeS3Uri: !Join [ '', [ '{{resolve:ssm:/', !Ref ParentStack, '/lake/bucket/silver/prefix_uri', '}}' ] ]
+        BronzeLakeS3Uri: !Join [ '', [ '{{resolve:ssm:/', !Ref ParentStack, '/lake/bucket/bronze/prefix_uri', '}}' ] ]
+        GoldLakeS3Uri: !Join [ '', [ '{{resolve:ssm:/', !Ref ParentStack, '/lake/bucket/gold/prefix_uri', '}}' ] ]
+        Region: !Ref AWS::Region
+      Role: !GetAtt EmrStepFunctionRole.Arn
+      Type: STANDARD
+
+  LaunchEmrPipelineLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        "Version": "2012-10-17"
+        "Statement":
+          - Effect: Allow
+            Principal:
+              Service: [ "lambda.amazonaws.com" ]
+            Action: [ "sts:AssumeRole" ]
+      Description: Role for lambda to launch emr step function
+      ManagedPolicyArns:
+        - !If [ CreateLambdaInVpc,
+            arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole,
+            arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+          ]
+      Policies:
+        - PolicyName: LaunchPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: DynamoDB
+                Effect: Allow
+                Action:
+                  - dynamodb:Describe*
+                  - dynamodb:Query
+                  - dynamodb:*GetItem*
+                Resource: !Join ['', [ '{{resolve:ssm:/', !Ref ParentStack, '/runtime/config_table/arn', '}}' ] ]
+              - Sid: S3
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:PutObject
+                Resource:
+                  - !Join ['', [ '{{resolve:ssm:/', !Ref ParentStack, '/runtime/bucket/arn', '}}' ] ]
+                  - !Join ['', [ '{{resolve:ssm:/', !Ref ParentStack, '/runtime/bucket/arn', '}}/*' ] ]
+              - Sid: StepFunction
+                Effect: Allow
+                Action:
+                  - states:*Execution*
+                  - states:Describe*
+                Resource:
+                  - !Ref EmrStepFunction
+                  - !Join [':', [
+                      !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution',
+                      !GetAtt EmrStepFunction.Name,
+                      '*'
+                    ]]
+              - Sid: AllowSns
+                Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Sub '{{resolve:ssm:/${ParentStack}/runtime/sns/topic/arn}}'
+
+  LaunchEmrPipelineLambda:
+    Type: AWS::Serverless::Function
+    DependsOn: LaunchEmrPipelineLambdaRole
+    Properties:
+      CodeUri: ../src/lambdas/launch_emr_pipeline/
+      Description: Lambda Function for launching the EMR step function
+      Environment:
+        Variables:
+          STEPFUNCTION_ARN: !Ref EmrStepFunction
+          CONFIG_TABLE: !Join ['', [ '{{resolve:ssm:/', !Ref ParentStack, '/runtime/config_table/name', '}}' ] ]
+          RUNTIME_BUCKET: !Join ['', [ '{{resolve:ssm:/', !Ref ParentStack, '/runtime/bucket/name', '}}' ] ]
+          LOG_LEVEL: INFO
+          POWERTOOLS_SERVICE_NAME: LaunchEmrSfn
+          SILVER_LAKE_S3URI: !Join [ '', [ '{{resolve:ssm:/', !Ref ParentStack, '/lake/bucket/silver/prefix_uri', '}}' ] ]
+          BRONZE_LAKE_S3URI: !Join [ '', [ '{{resolve:ssm:/', !Ref ParentStack, '/lake/bucket/bronze/prefix_uri', '}}' ] ]
+          TOPIC_ARN: !Sub '{{resolve:ssm:/${ParentStack}/runtime/sns/topic/arn}}'
+      Handler: handler.handler
+      Role: !GetAtt LaunchEmrPipelineLambdaRole.Arn
+      Runtime: python3.9
+      Timeout: 90
+      # If VPC was created as part of this deployment, create the lambda in vpc, otherwise omit vpc settings
+      VpcConfig:
+        SecurityGroupIds: [ !If [
+            CreateLambdaInVpc,
+            !Sub '{{resolve:ssm:/${ParentStack}/network/vpc/defaultsg}}',
+            !Ref AWS::NoValue
+        ]]
+        SubnetIds: [
+          !If [
+            CreateLambdaInVpc,
+            !Sub '{{resolve:ssm:/${ParentStack}/network/subnet/a/id}}',
+            !Ref AWS::NoValue
+          ],
+          !If [
+            CreateLambdaInVpc,
+            !Sub '{{resolve:ssm:/${ParentStack}/network/subnet/b/id}}',
+            !Ref AWS::NoValue
+          ]
+        ]
+
+  FullLoadSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Invoke Full Load to Bronze from JDBC once per week for faster recovery in case of failure
+      ScheduleExpression: rate(7 days)
+      State: DISABLED
+      Targets:
+        - Arn: !GetAtt LaunchEmrPipelineLambda.Arn
+          Id: !Ref LaunchEmrPipelineLambda
+          Input: !Sub >
+            {
+              "Identifier": "${UseCase}",
+              "PipelineType": "jdbc_load"
+            }
+
+  IncrementalLoadSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Invoke periodic incremental updates of the hudi tables
+      ScheduleExpression: !Ref IncrementalSchedule
+      State: DISABLED
+      Targets:
+        - Arn: !GetAtt LaunchEmrPipelineLambda.Arn
+          Id: !Ref LaunchEmrPipelineLambda
+          Input: !Sub >
+            {
+              "Identifier": "${UseCase}",
+              "PipelineType": "incremental_hudi"
+            }
+
+  LambdaPermissionFullLoad:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LaunchEmrPipelineLambda
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt FullLoadSchedule.Arn
+
+  LambdaPermissionIncrementalLoad:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LaunchEmrPipelineLambda
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt IncrementalLoadSchedule.Arn
+
+  LaunchEmrPipelineLambdaManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Policy to attach to roles that need to launch the EMR Pipeline Lambda
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: InvokeLambda
+            Effect: Allow
+            Action:
+              - lambda:InvokeFunction
+            Resource: !GetAtt LaunchEmrPipelineLambda.Arn
+      Roles:
+        - !Ref EmrStepFunctionRole
+
+  LaunchEmrPipelineLambdaArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Launch lambda arn
+      Name: !Sub '/${ParentStack}/emr_pipeline/launch_lambda/arn'
+      Type: String
+      Value: !GetAtt LaunchEmrPipelineLambda.Arn
+
+  EmrStepFunctionArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Step function arn
+      Name: !Sub '/${ParentStack}/emr_pipeline/stepfunction/arn'
+      Type: String
+      Value: !Ref EmrStepFunction
+
+  FullLoadScheduleName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Launch lambda arn
+      Name: !Sub '/${ParentStack}/emr_pipeline/event_rule/jdbc_load/name'
+      Type: String
+      Value: !Ref FullLoadSchedule
+
+  IncrementalScheduleName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Launch lambda arn
+      Name: !Sub '/${ParentStack}/emr_pipeline/event_rule/incremental_hudi/name'
+      Type: String
+      Value: !Ref IncrementalLoadSchedule

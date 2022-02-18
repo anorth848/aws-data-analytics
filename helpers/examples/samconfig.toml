@@ -1,0 +1,72 @@
+ version=0.1
+ [default.global.parameters]
+ stack_name = "common-stack"
+
+ [default.deploy.parameters]
+ stack_name = "rdbms-analytics"
+ # by default, SAM will create a bucket for your artifacts.
+ # Override that here if you have an existing bucket you'd like to use
+ # s3_bucket = "adam-123456789012"
+ # comment out 'resolve_s3' line if you use your own bucket
+ resolve_s3 = true
+ s3_prefix = "rdbms_analytics/sam_deployments/"
+ region = "us-east-1"
+ confirm_changeset = true
+ capabilities = ["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM", "CAPABILITY_AUTO_EXPAND"]
+ tags = "project=\"rdbms-analytics\" stage=\"test\""
+ parameter_overrides = """UseCase=rdbms_analytics
+    CreateNetworkInfrastructure=TRUE
+    CreateDmsVpcRole=TRUE
+    CreateDmsInfrastructure=TRUE
+    CreateConsumptionStack=TRUE
+    OpsEmailAddress=foo@bar.com
+    DbName=hammerdb
+    DbEndpoint=pg-db.endpoint.us-east-1.rds.amazonaws.com
+    DbUserNameSpark=spark
+    DBUserNameDms=awsdms
+    IncrementalSchedule=rate(2 hours)"""
+
+ [dr.deploy.parameters]
+ stack_name = "rdbms-analytics-dr"
+ resolve_s3 = true
+ s3_prefix = "rdbms_analytics/sam_deployments/"
+ region = "us-west-2"
+ confirm_changeset = true
+ capabilities = ["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM", "CAPABILITY_AUTO_EXPAND"]
+ tags = "project=\"rdbms-analytics\" stage=\"dr\""
+ parameter_overrides = """UseCase=rdbms_analytics
+    CreateNetworkInfrastructure=TRUE
+    CreateDmsVpcRole=FALSE
+    CreateDmsInfrastructure=TRUE
+    CreateConsumptionStack=TRUE
+    OpsEmailAddress=foo@bar.com
+    DbName=hammerdb
+    DbEndpoint=pg-db.endpoint.us-east-1.rds.amazonaws.com
+    DbUserNameSpark=spark
+    DBUserNameDms=awsdms
+    IncrementalSchedule=rate(2 hours)"""
+
+ # Example of BYO VPC
+ [novpc.deploy.parameters]
+ stack_name = "novpc"
+ resolve_s3 = true
+ s3_prefix = "byovpc/sam_deployments/"
+ region = "us-east-1"
+ confirm_changeset = true
+ capabilities = ["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM", "CAPABILITY_AUTO_EXPAND"]
+ tags = "project=\"byovpc\" stage=\"dev\""
+ parameter_overrides = """
+    UseCase=rdbms_analytics_novpc
+    CreateNetworkInfrastructure=FALSE
+    CreateDmsVpcRole=FALSE
+    CreateDmsInfrastructure=TRUE
+    CreateQuickSightInfrastructure=TRUE
+    CreateConsumptionStack=TRUE
+    OpsEmailAddress=foo@bar.com
+    VpcSubnetIds=subnet-0c42e559d4f193d7c,subnet-0a19735793dc0ca0e
+    DbName=hammerdb
+    DbEndpoint=pg-db.endpoint.us-east-1.rds.amazonaws.com
+    DbUserNameSpark=spark
+    DBUserNameDms=awsdms
+    IncrementalSchedule=rate(2 hours)"""
+

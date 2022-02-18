@@ -1,0 +1,331 @@
+{
+    "Comment": "Launch the EMR cluster and run job steps",
+    "StartAt": "LaunchEMR",
+    "States": {
+        "LaunchEMR": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::elasticmapreduce:createCluster.sync",
+            "InputPath": "$.lambda",
+            "Parameters": {
+                "Name.$": "$$.Execution.Name",
+                "VisibleToAllUsers": true,
+                "ReleaseLabel.$": "$.pipeline.emr_config.release_label",
+                "EbsRootVolumeSize": 10,
+                "Tags": [
+                    {
+                        "Key": "for-use-with-amazon-emr-managed-policies",
+                        "Value": "true"
+                    }
+                ],
+                "Applications": [
+                    { "Name": "Hive" },
+                    { "Name": "Hadoop" },
+                    { "Name": "Spark" }
+                ],
+                "ServiceRole": "${EmrServiceRole}",
+                "JobFlowRole": "${EmrJobFlowRole}",
+                "LogUri": "${EmrLogUri}",
+                "StepConcurrencyLevel.$": "$.pipeline.emr_config.step_parallelism",
+                "BootstrapActions": [
+                    {
+                        "Name": "SyncLibsAndConfigs",
+                        "ScriptBootstrapAction": {
+                            "Path": "${ArtifactPrefixUri}/emr/bootstrap/bootstrap.sh",
+                            "Args.$": "States.Array('${ArtifactPrefixUri}', $.runtime_configs)"
+                        }
+                    }
+                ],
+                "Instances": {
+                    "Ec2SubnetIds.$": "States.Array('${EmrEc2SubnetIdA}', '${EmrEc2SubnetIdB}')",
+                    "KeepJobFlowAliveWhenNoSteps": true,
+                    "InstanceFleets": [
+                        {
+                            "InstanceFleetType": "MASTER",
+                            "InstanceTypeConfigs": [
+                                {
+                                    "EbsConfiguration": {
+                                        "EbsBlockDeviceConfigs": [
+                                            {
+                                                "VolumeSpecification": {
+                                                    "SizeInGB": 32,
+                                                    "VolumeType": "gp2"
+                                                },
+                                                "VolumesPerInstance": 1
+                                            }
+                                        ]
+                                    },
+                                    "InstanceType.$": "$.pipeline.emr_config.master.instance_type",
+                                    "WeightedCapacity": 1
+                                }
+                            ],
+                            "Name": "master-fleet",
+                            "TargetOnDemandCapacity": 1
+                        },
+                        {
+                            "InstanceFleetType": "CORE",
+                            "InstanceTypeConfigs": [
+                                {
+                                    "EbsConfiguration": {
+                                        "EbsBlockDeviceConfigs": [
+                                            {
+                                                "VolumeSpecification": {
+                                                    "SizeInGB": 100,
+                                                    "VolumeType": "gp2"
+                                                },
+                                                "VolumesPerInstance": 1
+                                            }
+                                        ]
+                                    },
+                                    "InstanceType.$": "$.pipeline.emr_config.worker.instance_type",
+                                    "WeightedCapacity": 1
+                                }
+                            ],
+                            "Name": "core-fleet",
+                            "TargetOnDemandCapacity.$": "$.pipeline.emr_config.worker.count"
+                        }
+                    ]
+                },
+                "Configurations": [
+                    {
+                        "Classification":"hive-site",
+                        "Properties": {
+                            "hive.metastore.client.factory.class":"com.amazonaws.glue.catalog.metastore.AWSGlueDataCatalogHiveClientFactory"
+                        }
+                    },
+                    {
+                        "Classification":"spark-hive-site",
+                        "Properties":{
+                            "hive.metastore.client.factory.class":"com.amazonaws.glue.catalog.metastore.AWSGlueDataCatalogHiveClientFactory"
+                        }
+                    },
+                    {
+                        "Classification":"spark-defaults",
+                        "Properties":{
+                            "spark.hadoop.hive.metastore.client.factory.class": "com.amazonaws.glue.catalog.metastore.AWSGlueDataCatalogHiveClientFactory",
+                            "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
+                            "spark.sql.hive.convertMetastore": "false",
+                            "spark.jars": "/usr/lib/hudi/hudi-spark-bundle.jar,/usr/lib/spark/external/lib/spark-avro.jar,/usr/lib/hudi/hudi-utilities-bundle.jar",
+                            "spark.driver.extraJavaOptions": "-XX:+PrintTenuringDistribution -XX:+PrintGCDetails -XX:+PrintGCDateStamps -XX:+PrintGCApplicationStoppedTime -XX:+PrintGCApplicationConcurrentTime -XX:+PrintGCTimeStamps -XX:+HeapDumpOnOutOfMemoryError",
+                            "spark.executor.extraJavaOptions": "-XX:+PrintTenuringDistribution -XX:+PrintGCDetails -XX:+PrintGCDateStamps -XX:+PrintGCApplicationStoppedTime -XX:+PrintGCApplicationConcurrentTime -XX:+PrintGCTimeStamps -XX:+HeapDumpOnOutOfMemoryError"
+                        }
+                    },
+                    {
+                        "Classification":"spark-env",
+                        "Properties":{},
+                        "Configurations": [
+                           {
+                             "Classification": "export",
+                             "Properties": {
+                                 "LOG_LEVEL.$": "$.log_level",
+                                 "BRONZE_LAKE_S3URI": "${BronzeLakeS3Uri}",
+                                 "SILVER_LAKE_S3URI": "${SilverLakeS3Uri}",
+                                 "GOLD_LAKE_S3URI": "${GoldLakeS3Uri}",
+                                 "REGION": "${Region}"
+                             }
+                           }
+                        ]
+                    },
+                    {
+                        "Classification": "spark",
+                        "Properties": {
+                            "maximizeResourceAllocation.$": "$.pipeline.emr_config.maximize_resource_allocation"
+                        }
+                    }
+                ]
+            },
+            "ResultPath": "$.cluster",
+            "Next": "ParallelLoadSteps"
+        },
+        "ParallelLoadSteps": {
+            "Type": "Map",
+            "InputPath": "$",
+            "ItemsPath": "$.lambda.steps",
+            "Next": "SuccessOrFailChoice",
+            "ResultPath": "$.steps",
+            "Parameters": {
+                "step_config.$": "$$.Map.Item.Value",
+                "cluster_id.$": "$.cluster.ClusterId"
+            },
+            "Catch" : [
+                {
+                    "ErrorEquals": [ "States.ALL" ],
+                    "ResultPath": "$.exception",
+                    "Next": "SuccessOrFailChoice"
+                }
+            ],
+            "Iterator": {
+                "StartAt": "AddJobStep",
+                "States": {
+                    "AddJobStep": {
+                        "Type": "Task",
+                        "InputPath": "$",
+                        "Resource": "arn:aws:states:::elasticmapreduce:addStep.sync",
+                        "ResultPath": "$.steps",
+                        "Parameters": {
+                            "ClusterId.$": "$.cluster_id",
+                            "Step": {
+                                "ActionOnFailure": "CONTINUE",
+                                "HadoopJarStep": {
+                                    "Args.$": "$.step_config.jar_step_args",
+                                    "Jar": "command-runner.jar"
+                                },
+                                "Name.$": "$.step_config.step_name"
+                            }
+                        },
+                        "Retry": [
+                            {
+                                "ErrorEquals": [ "States.TaskFailed" ],
+                                "IntervalSeconds": 5,
+                                "MaxAttempts": 1,
+                                "BackoffRate": 1.5
+                            }
+                        ],
+                        "End": true
+                    }
+                }
+            }
+        },
+        "SuccessOrFailChoice": {
+            "Type": "Choice",
+            "Comment": "If .exception exists in the state input, process the exception otherwise send success sns",
+            "Choices": [
+                {
+                    "Variable": "$.exception",
+                    "IsPresent": true,
+                    "Next": "TransformException"
+                },
+                {
+                    "Variable": "$.exception",
+                    "IsPresent": false,
+                    "Next": "SnsSendSuccess"
+                }
+            ]
+        },
+        "TransformException": {
+            "Type": "Pass",
+            "Comment": "The exception comes through as a json formatted string, transform to actual json for downstream",
+            "Parameters": {
+                "Error.$": "$.exception.Error",
+                "Cause.$": "States.StringToJson($.exception.Cause)"
+            },
+            "ResultPath": "$.exception",
+            "Next": "EmrFailureDetailsMessageOrReasonChoice"
+        },
+        "EmrFailureDetailsMessageOrReasonChoice": {
+            "Type": "Choice",
+            "Comment": "EMR API FailureDetails will contain Reason *or* Message attributes, determine here which we got",
+            "Choices": [
+                {
+                    "Variable": "$.exception.Cause.Step.Status.FailureDetails.Reason",
+                    "IsPresent": true,
+                    "Next": "MungeEmrFailureDetailsForSns"
+                },
+                {
+                    "Variable": "$.exception.Cause.Step.Status.FailureDetails.Message",
+                    "IsPresent": true,
+                    "Next": "SnsSendFailure"
+                }
+            ]
+        },
+        "MungeEmrFailureDetailsForSns": {
+            "Type": "Pass",
+            "Comment": "Copy Reason to Message for the downstream SnsSendFailure",
+            "Parameters": {
+                "Cause": {
+                    "Step": {
+                        "Status": {
+                            "FailureDetails": {
+                                "Message.$": "$.exception.Cause.Step.Status.FailureDetails.Reason",
+                                "LogFile.$": "$.exception.Cause.Step.Status.FailureDetails.LogFile"
+                            }
+                        }
+                    }
+                },
+                "Error.$": "$.exception.Error"
+            },
+            "ResultPath": "$.exception",
+            "Next": "SnsSendFailure"
+        },
+        "SnsSendFailure": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::sns:publish",
+            "Parameters": {
+                "TopicArn": "${RuntimeSnsTopicArn}",
+                "Subject.$": "States.Format('FAILURE | {} | {} | {}', $.lambda.identifier, $.lambda.pipeline_type, $.exception.Error)",
+                "Message.$": "States.Format('Execution: {} Message: {} LogFile: {}', $$.Execution.Id, $.exception.Cause.Step.Status.FailureDetails.Message, $.exception.Cause.Step.Status.FailureDetails.LogFile)"
+            },
+            "Next": "TerminateCluster",
+            "ResultPath": "$.sns_output"
+        },
+        "SnsSendSuccess": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::sns:publish",
+            "Parameters": {
+                "TopicArn": "${RuntimeSnsTopicArn}",
+                "Subject.$": "States.Format('SUCCESS | {} | {}', $.lambda.identifier, $.lambda.pipeline_type)",
+                "Message.$": "States.Format('Execution: {} Succeeded.', $$.Execution.Id)"
+            },
+            "Next": "TerminateCluster",
+            "ResultPath": "$.sns_output"
+        },
+        "TerminateCluster": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::elasticmapreduce:terminateCluster",
+            "InputPath": "$",
+            "Parameters": {
+                "ClusterId.$": "$.cluster.ClusterId"
+            },
+            "Next": "ExitOrLaunchNext",
+            "ResultPath": "$.cluster.terminate_output"
+        },
+        "ExitOrLaunchNext": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Variable": "$.exception",
+                    "IsPresent": true,
+                    "Next": "ExitFail"
+                },
+                {
+                    "And": [
+                        {
+                            "Variable": "$.lambda.pipeline.next_pipeline",
+                            "IsPresent": true
+                        },
+                        {
+                            "Variable": "$.lambda.pipeline.next_pipeline.pipeline_type",
+                            "IsPresent": true
+                        },
+                        {
+                            "Variable": "$.lambda.pipeline.next_pipeline.enabled",
+                            "BooleanEquals": true
+                        }
+                    ],
+                    "Next": "LaunchNextPipeline"
+                }
+            ],
+            "Default": "ExitSuccess"
+        },
+        "LaunchNextPipeline":{
+            "Type":"Task",
+            "Resource":"arn:aws:states:::lambda:invoke",
+            "Parameters":{
+                "FunctionName.$": "$.lambda.function_name",
+                "InvocationType": "Event",
+                "Payload": {
+                    "Identifier.$": "$.lambda.identifier",
+                    "PipelineType.$": "$.lambda.pipeline.next_pipeline.pipeline_type"
+                }
+            },
+            "Next": "ExitSuccess"
+        },
+        "ExitSuccess": {
+            "Type": "Succeed"
+        },
+        "ExitFail": {
+          "Type": "Fail",
+          "Cause": "Check SNS notification for details, or look in this execution's output.",
+          "Error": "Error detected in EMR Job Steps."
+        }
+    }
+}
