@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Infrastructure components required at runtime for the pipeline resources to function
+
+Parameters:
+  ParentStack:
+    Type: String
+    Description: Parent stack this template was launched from, used for naming SSM parameters
+
+  OpsEmailAddress:
+    Type: String
+    Description: The Operations team email address for notifications
+
+Resources:
+  SourceConfigTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: identifier
+          AttributeType: S
+        - AttributeName: config
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: identifier
+          KeyType: HASH
+        - AttributeName: config
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: TRUE
+
+  RuntimeBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'AES256'
+      LifecycleConfiguration:
+        Rules:
+          -
+            Id: Expiration
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 2
+            NoncurrentVersionExpirationInDays: 7
+            ExpiredObjectDeleteMarker: TRUE
+            Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: TRUE
+        BlockPublicPolicy: TRUE
+        IgnorePublicAcls: TRUE
+        RestrictPublicBuckets: TRUE
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      VersioningConfiguration:
+        Status: Enabled
+
+  RuntimeSnsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Sub '${ParentStack}-Runtime-SNS'
+
+  RuntimeSnsOpsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !Ref OpsEmailAddress
+      Protocol: email
+      TopicArn: !Ref RuntimeSnsTopic
+
+  SourceConfigTableNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: DynamoDB table for data source configs
+      Name: !Sub '/${ParentStack}/runtime/config_table/name'
+      Type: String
+      Value: !Ref SourceConfigTable
+
+  SourceConfigTableArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: DynamoDB table for data source configs
+      Name: !Sub '/${ParentStack}/runtime/config_table/arn'
+      Type: String
+      Value: !GetAtt SourceConfigTable.Arn
+
+  RuntimeBucketNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Runtime s3 bucket name
+      Name: !Sub '/${ParentStack}/runtime/bucket/name'
+      Type: String
+      Value: !Ref RuntimeBucket
+
+  RuntimeBucketArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Runtime s3 bucket arn
+      Name: !Sub '/${ParentStack}/runtime/bucket/arn'
+      Type: String
+      Value: !GetAtt RuntimeBucket.Arn
+
+  RuntimeSnsTopicArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Runtime SNS topic arn
+      Name: !Sub '/${ParentStack}/runtime/sns/topic/arn'
+      Type: String
+      Value: !Ref RuntimeSnsTopic

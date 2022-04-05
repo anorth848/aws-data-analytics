@@ -1,0 +1,281 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Stack which contains the Data Lake related resources (Glue, S3, Lake Formation etc)
+
+Parameters:
+  ParentStack:
+    Type: String
+    Description: Parent stack this template was launched from, used for naming SSM parameters
+
+  UseCase:
+    Type: String
+    AllowedPattern: "[a-z_]+"
+    Description: The use case. This will be used for naming resources throughout nested stacks.
+
+Resources:
+  SilverLakeBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Description: Bucket for raw data, not meant to be consumed by Analysts
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'AES256'
+      LifecycleConfiguration:
+        Rules:
+          -
+            Id: Expiration
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 2
+            NoncurrentVersionExpirationInDays: 7
+            ExpiredObjectDeleteMarker: TRUE
+            Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: TRUE
+        BlockPublicPolicy: TRUE
+        IgnorePublicAcls: TRUE
+        RestrictPublicBuckets: TRUE
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      VersioningConfiguration:
+        Status: Enabled
+
+  BronzeLakeBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Description: Bucket for raw data, not meant to be consumed by Analysts
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'AES256'
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireNonCurrent
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 2
+            NoncurrentVersionExpirationInDays: 7
+            ExpiredObjectDeleteMarker: TRUE
+            Status: Enabled
+          - Id: ExpireIncremental
+            ExpirationInDays: 14
+            Prefix: !Sub '${UseCase}/incremental/'
+            Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: TRUE
+        BlockPublicPolicy: TRUE
+        IgnorePublicAcls: TRUE
+        RestrictPublicBuckets: TRUE
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      VersioningConfiguration:
+        Status: Enabled
+
+  GoldLakeBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Description: Bucket for business facing and pre-aggregated data
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'AES256'
+      LifecycleConfiguration:
+        Rules:
+          -
+            Id: Expiration
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 2
+            NoncurrentVersionExpirationInDays: 7
+            ExpiredObjectDeleteMarker: TRUE
+            Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: TRUE
+        BlockPublicPolicy: TRUE
+        IgnorePublicAcls: TRUE
+        RestrictPublicBuckets: TRUE
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      VersioningConfiguration:
+        Status: Enabled
+
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Description: Data Lake database
+        Name: !Ref UseCase
+
+  LakeFormationLocationRole:
+    Type: AWS::IAM::Role
+    DependsOn: [ GlueDatabase ]
+    Properties:
+      AssumeRolePolicyDocument: {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "lakeformation.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole" ]
+          }
+        ]
+      }
+      Description: Service role for LakeFormation
+      MaxSessionDuration: 43200
+      Policies:
+        - PolicyName: LakeFormation
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: ListAll
+                Effect: Allow
+                Action:
+                  - s3:ListAllMybuckets
+                Resource: !Sub 'arn:${AWS::Partition}:s3:::*'
+              - Sid: ListBucket
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt BronzeLakeBucket.Arn
+                  - !GetAtt SilverLakeBucket.Arn
+                  - !GetAtt GoldLakeBucket.Arn
+              - Sid: S3ObjectAccess
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                Resource:
+                  - !Join ["/", [ !GetAtt SilverLakeBucket.Arn, !Ref GlueDatabase, '*' ] ]
+                  - !Join ["/", [ !GetAtt SilverLakeBucket.Arn, !Ref GlueDatabase ] ]
+                  - !Join [ "/", [ !GetAtt BronzeLakeBucket.Arn, !Ref GlueDatabase, '*' ] ]
+                  - !Join [ "/", [ !GetAtt BronzeLakeBucket.Arn, !Ref GlueDatabase ] ]
+                  - !Join [ "/", [ !GetAtt GoldLakeBucket.Arn, !Ref GlueDatabase, '*' ] ]
+                  - !Join [ "/", [ !GetAtt GoldLakeBucket.Arn, !Ref GlueDatabase ] ]
+
+  BronzeLakeLocationResource:
+    Type: AWS::LakeFormation::Resource
+    DependsOn: LakeFormationLocationRole
+    Properties:
+      ResourceArn: !Join ["/", [ !GetAtt BronzeLakeBucket.Arn, !Ref GlueDatabase ]]
+      # ServiceLinkedRole does not properly delete using CloudFormation so using a traditional IAM role
+      UseServiceLinkedRole: FALSE
+      RoleArn: !GetAtt LakeFormationLocationRole.Arn
+
+  SilverLakeLocationResource:
+    Type: AWS::LakeFormation::Resource
+    DependsOn: LakeFormationLocationRole
+    Properties:
+      ResourceArn: !Join [ "/", [ !GetAtt SilverLakeBucket.Arn, !Ref GlueDatabase ] ]
+      # ServiceLinkedRole does not properly delete using CloudFormation so using a traditional IAM role
+      UseServiceLinkedRole: FALSE
+      RoleArn: !GetAtt LakeFormationLocationRole.Arn
+
+  GoldLakeLocationResource:
+    Type: AWS::LakeFormation::Resource
+    DependsOn: LakeFormationLocationRole
+    Properties:
+      ResourceArn: !Join [ "/", [ !GetAtt GoldLakeBucket.Arn, !Ref GlueDatabase ] ]
+      # ServiceLinkedRole does not properly delete using CloudFormation so using a traditional IAM role
+      UseServiceLinkedRole: FALSE
+      RoleArn: !GetAtt LakeFormationLocationRole.Arn
+
+  CatalogParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Data lake database name
+      Name: !Sub '/${ParentStack}/lake/glue/db/name'
+      Type: String
+      Value: !Ref GlueDatabase
+
+  SilverBucketNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Data Lake s3 bucket
+      Name: !Sub '/${ParentStack}/lake/bucket/silver/name'
+      Type: String
+      Value: !Ref SilverLakeBucket
+
+  SilverBucketArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Data Lake s3 bucket ARN
+      Name: !Sub '/${ParentStack}/lake/bucket/silver/arn'
+      Type: String
+      Value: !GetAtt SilverLakeBucket.Arn
+
+  SilverPrefixParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Data Lake s3 prefix uri
+      Name: !Sub '/${ParentStack}/lake/bucket/silver/prefix_uri'
+      Type: String
+      Value: !Join ['', ['s3://', !Ref SilverLakeBucket, '/', !Ref GlueDatabase]]
+
+  BronzeBucketNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Raw Data Lake s3 bucket
+      Name: !Sub '/${ParentStack}/lake/bucket/bronze/name'
+      Type: String
+      Value: !Ref BronzeLakeBucket
+
+  BronzeBucketArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Raw Data Lake s3 bucket ARN
+      Name: !Sub '/${ParentStack}/lake/bucket/bronze/arn'
+      Type: String
+      Value: !GetAtt BronzeLakeBucket.Arn
+
+  BronzePrefixParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Data Lake s3 prefix uri
+      Name: !Sub '/${ParentStack}/lake/bucket/bronze/prefix_uri'
+      Type: String
+      Value: !Join [ '', [ 's3://', !Ref BronzeLakeBucket, '/', !Ref GlueDatabase ] ]
+
+  GoldBucketNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Data Lake s3 bucket
+      Name: !Sub '/${ParentStack}/lake/bucket/gold/name'
+      Type: String
+      Value: !Ref GoldLakeBucket
+
+  GoldBucketArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Data Lake s3 bucket ARN
+      Name: !Sub '/${ParentStack}/lake/bucket/gold/arn'
+      Type: String
+      Value: !GetAtt GoldLakeBucket.Arn
+
+  GoldPrefixParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Data Lake s3 prefix uri
+      Name: !Sub '/${ParentStack}/lake/bucket/gold/prefix_uri'
+      Type: String
+      Value: !Join ['', ['s3://', !Ref GoldLakeBucket, '/', !Ref GlueDatabase]]
+
+  LakeFormationLocationRoleParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: LakeFormation IAM role
+      Name: !Sub '/${ParentStack}/lake/iam/lf/role_id'
+      Type: String
+      Value: !GetAtt LakeFormationLocationRole.RoleId
+
+
+

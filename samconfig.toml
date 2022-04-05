@@ -1,0 +1,49 @@
+ version=0.1
+ [default.deploy.parameters]
+ stack_name = "hudi-lake"
+ # by default, SAM will create a bucket for your artifacts.
+ # Override that here if you have an existing bucket you'd like to use
+ # s3_bucket = "my-sam-bucket-1234567890"
+ # comment out 'resolve_s3' line if you use your own bucket
+ resolve_s3 = true
+ s3_prefix = "hudi-lake/sam_deployments/"
+ region = "us-east-1"
+ confirm_changeset = true
+ capabilities = ["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM", "CAPABILITY_AUTO_EXPAND"]
+ tags = "project=\"hudi-lake\" stage=\"example\""
+ parameter_overrides = """UseCase=rdbms_analytics
+    CreateNetworkInfrastructure=TRUE
+    CreateDmsVpcRole=TRUE
+    CreateDmsInfrastructure=TRUE
+    CreateConsumptionStack=TRUE
+    OpsEmailAddress=foo@bar.com
+    DbName=hammerdb
+    DbEndpoint=hammerdb.abcdefghijkl.us-east-1.rds.amazonaws.com
+    DbUserNameSpark=spark
+    DBUserNameDms=awsdms
+    IncrementalSchedule=rate(2 hours)"""
+
+# Bring your own networking example
+ [byon.deploy.parameters]
+ stack_name = "hudi-lake-byon"
+ # by default, SAM will create a bucket for your artifacts.
+ # Override that here if you have an existing bucket you'd like to use
+ # s3_bucket = "my-sam-bucket-1234567890"
+ # comment out 'resolve_s3' line if you use your own bucket
+ resolve_s3 = true
+ s3_prefix = "hudi-lake-byon/sam_deployments/"
+ region = "us-east-1"
+ confirm_changeset = true
+ capabilities = ["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM", "CAPABILITY_AUTO_EXPAND"]
+ tags = "project=\"hudi-lake-byon\" stage=\"example\""
+ parameter_overrides = """
+    UseCase=rdbms_analytics_novpc
+    CreateNetworkInfrastructure=FALSE
+    CreateDmsInfrastructure=TRUE
+    CreateConsumptionStack=TRUE
+    VpcSubnetIds=subnet-012345678abcdef01,subnet-012345678abcdef02
+    OpsEmailAddress=foo@bar.com
+    DbName=hammerdb
+    DbEndpoint=hammerdb.abcdefghijkl.us-east-1.rds.amazonaws.com
+    DbUserNameSpark=spark
+    DBUserNameDms=awsdms"""

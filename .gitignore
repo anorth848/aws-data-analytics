@@ -127,3 +127,12 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+#  Apple Desktop Services Store
+.DS_Store
+
+# pycharm
+.idea
+
+# AWS SAM
+.aws-sam

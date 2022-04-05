@@ -1,0 +1,194 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Parent template for all components related to the project
+
+Parameters:
+  UseCase:
+    Type: String
+    AllowedPattern: "[a-z_]+"
+    Description: The use case. This will be used for naming resources throughout nested stacks.
+
+  CreateNetworkInfrastructure:
+    Type: String
+    AllowedValues: [ 'TRUE', 'FALSE' ]
+    Default: 'TRUE'
+
+  VpcSubnetIds:
+    Type: String
+    Description: >
+      Comma separated list of two existing private subnets this stack will run in.
+      Ignored if CreateNetworkInfrastructure is set to TRUE
+    Default: ""
+
+  VpcSubnetIpBlocks:
+    Type: String
+    Description: Comma deliminted list of four Cidr ranges. Only relevant if VpcSubnetIds is set to CREATE
+    Default: "10.0.0.0/24, 10.0.1.0/24, 10.0.2.0/24, 10.0.3.0/24"
+
+  CreateConsumptionStack:
+    Type: String
+    AllowedValues: [ 'TRUE', 'FALSE' ]
+    Default: 'FALSE'
+
+  DbName:
+    Type: String
+    NoEcho: True
+    Description: The database name for the RDS secret
+
+  DbEndpoint:
+    Type: String
+    NoEcho: True
+    Description: The RDS endpoint
+    Default: xxxxxxxxx
+
+  DbPort:
+    Type: Number
+    NoEcho: True
+    Description: The RDS Db Port
+    Default: 5432
+
+  DbEngine:
+    Type: String
+    NoEcho: True
+    Description: The RDS Db Engine
+    Default: postgres
+    AllowedValues: [ 'postgres' ]
+
+  DbUserNameSpark:
+    Type: String
+    NoEcho: True
+    Description: The RDS Db user for spark
+    Default: spark
+
+  DbUserNameDms:
+    Type: String
+    NoEcho: True
+    Description: The RDS Db user for AWS DMS
+    Default: awsdms
+
+  CreateDmsVpcRole:
+    #  If DMS has not been previously used in this account, you will need to create the dms-vpc-role or DMS resources in this stack will fail
+    #  With error: The IAM Role arn:aws:iam::${AccountId}:role/dms-vpc-role is not configured properly.
+    #  This can be done through the GUI by manually configuring a Subnet group, or
+    #  by setting this parameter to TRUE. If the role already exists, set this to FALSE or omit to default FALSE
+    Type: String
+    Description: Whether or not to create the DMS VPC Role
+    AllowedValues: [ 'TRUE', 'FALSE' ]
+    Default: 'FALSE'
+
+  CreateDmsInfrastructure:
+    #  Recommended to set this to TRUE and update the stack *AFTER* initial installation,
+    #  and after you've configured the secrets in SecretsStack
+    Type: String
+    AllowedValues: [ 'TRUE', 'FALSE' ]
+    Default: 'FALSE'
+    Description: Control whether or not to create the AWS DMS Infrastructure
+
+  OpsEmailAddress:
+    Type: String
+    Description: The Operations team email address for notifications
+    AllowedPattern: "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"
+
+  IncrementalSchedule:
+    Type: String
+    Description: The schedule expression for the Hudi incremental jobs
+    Default: 'rate(2 hours)'
+    AllowedPattern: "(rate|cron)\\(.*\\)"
+
+Conditions:
+  CreateConsumptionStack: !Equals [ !Ref CreateConsumptionStack, 'TRUE' ]
+  CreateNetworkInfrastructure: !Equals [ !Ref CreateNetworkInfrastructure, 'TRUE' ]
+  CreateDmsInfrastructure: !Equals [ !Ref CreateDmsInfrastructure, 'TRUE' ]
+
+Resources:
+  NetworkInfrastructureStack:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: templates/network-infrastructure.yaml
+      Parameters:
+        UseCase: !Ref UseCase
+        ParentStack: !Ref AWS::StackName
+        VpcSubnetIds: !If [ CreateNetworkInfrastructure, 'NONE', !Ref VpcSubnetIds ]
+        CreateNetworkInfrastructure: !If [ CreateNetworkInfrastructure, 'TRUE', 'FALSE' ]
+        VpcSubnetIpBlocks: !If [ CreateNetworkInfrastructure, !Ref VpcSubnetIpBlocks, '' ]
+
+  DataLakeStack:
+    Type: AWS::Serverless::Application
+    DependsOn: NetworkInfrastructureStack
+    Properties:
+      Location: templates/datalake.yaml
+      Parameters:
+        UseCase: !Ref UseCase
+        ParentStack: !Ref AWS::StackName
+
+  CicdInfrastructureStack:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: templates/cicd-infrastructure.yaml
+      Parameters:
+        ParentStack: !Ref AWS::StackName
+
+  RuntimeInfrastructureStack:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: templates/runtime-infrastructure.yaml
+      Parameters:
+        ParentStack: !Ref AWS::StackName
+        OpsEmailAddress: !Ref OpsEmailAddress
+
+  SecretsStack:
+    Type: AWS::Serverless::Application
+    Properties:
+      Location: templates/secrets.yaml
+      Parameters:
+        UseCase: !Ref UseCase
+        ParentStack: !Ref AWS::StackName
+        DbName: !Ref DbName
+        DbEndpoint: !Ref DbEndpoint
+        DbPort: !Ref DbPort
+        DbEngine: !Ref DbEngine
+        DbUserNameSpark: !Ref DbUserNameSpark
+        DbUserNameDms: !Ref DbUserNameDms
+
+  EmrPipelineStack:
+    Type: AWS::Serverless::Application
+    DependsOn: [ NetworkInfrastructureStack, RuntimeInfrastructureStack, CicdInfrastructureStack, DataLakeStack ]
+    Properties:
+      Location: templates/emr-pipeline.yaml
+      Parameters:
+        UseCase: !Ref UseCase
+        ParentStack: !Ref AWS::StackName
+        CreateLambdaInVpc: !If [ CreateNetworkInfrastructure, 'TRUE', 'FALSE' ]
+        IncrementalSchedule: !Ref IncrementalSchedule
+
+  DmsInfrastructureStack:
+    Type: AWS::Serverless::Application
+    DependsOn: [ NetworkInfrastructureStack, RuntimeInfrastructureStack, SecretsStack, DataLakeStack ]
+    Properties:
+      Location: templates/dms-infrastructure.yaml
+      Parameters:
+        UseCase: !Ref UseCase
+        ParentStack: !Ref AWS::StackName
+        CreateDmsVpcRole: !Ref CreateDmsVpcRole
+
+  DataLakeBucketPolicyStack:
+    Type: AWS::Serverless::Application
+    Condition: CreateNetworkInfrastructure
+    DependsOn: [ NetworkInfrastructureStack, DataLakeStack, DmsInfrastructureStack ]
+    Properties:
+      Location: templates/datalake-bucketpolicy.yaml
+      Parameters:
+        ParentStack: !Ref AWS::StackName
+
+  #  This stack assumes you've enabled QuickSight in this account and have access from your IAM credentials
+  #  and Parameter CreateConsumptionStack set to 'TRUE'
+  ConsumptionStack:
+    Type: AWS::Serverless::Application
+    Condition: CreateConsumptionStack
+    DependsOn: [ DataLakeStack ]
+    Properties:
+      Location: templates/consumption.yaml
+      Parameters:
+        UseCase: !Ref UseCase
+        ParentStack: !Ref AWS::StackName

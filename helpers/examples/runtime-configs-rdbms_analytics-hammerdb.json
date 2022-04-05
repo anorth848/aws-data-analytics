@@ -1,0 +1,357 @@
+[
+    {
+        "config": "database::config",
+        "identifier": "rdbms_analytics",
+        "secret": "da-black-belt-2021/rdbms/rds/primary/spark",
+        "target_db_name": "rdbms_analytics",
+        "target_table_prefix": "hammerdb"
+    },
+    {
+        "config": "pipeline::system::jdbc_load",
+        "identifier": "rdbms_analytics",
+        "allowed_concurrent": ["incremental_hudi", "continuous_hudi"],
+        "emr_config": {
+            "release_label": "emr-6.5.0",
+            "master": {
+                "instance_type": "m5.xlarge"
+            },
+            "worker": {
+                "count": "6",
+                "instance_type": "r5.2xlarge"
+            },
+            "step_parallelism": 4
+        },
+        "next_pipeline": {
+            "pipeline_type": "seed_hudi",
+            "enabled": true
+        }
+    },
+    {
+        "config": "pipeline::system::seed_hudi",
+        "identifier": "rdbms_analytics",
+        "allowed_concurrent": false,
+        "emr_config": {
+            "release_label": "emr-6.5.0",
+            "master": {
+                "instance_type": "m5.xlarge"
+            },
+            "worker": {
+                "count": "6",
+                "instance_type": "r5.2xlarge"
+            },
+            "step_parallelism": 4
+        },
+        "master": {
+            "instance_type": "m5.xlarge"
+        },
+        "next_pipeline": {
+            "pipeline_type": "incremental_hudi",
+            "enabled": true
+        }
+    },
+    {
+        "config": "pipeline::system::continuous_hudi",
+        "identifier": "rdbms_analytics",
+        "allowed_concurrent": ["jdbc_load"],
+        "emr_config": {
+            "release_label": "emr-6.5.0",
+            "master": {
+                "instance_type": "m5.xlarge"
+            },
+            "worker": {
+                "count": "6",
+                "instance_type": "r5.xlarge"
+            },
+            "step_parallelism": 10
+        }
+    },
+    {
+        "config": "pipeline::system::incremental_hudi",
+        "identifier": "rdbms_analytics",
+        "allowed_concurrent": ["jdbc_load"],
+        "emr_config": {
+            "release_label": "emr-6.5.0",
+            "master": {
+                "instance_type": "m5.xlarge"
+            },
+            "worker": {
+                "count": "6",
+                "instance_type": "r5.2xlarge"
+            },
+            "step_parallelism": 4
+        },
+        "next_pipeline": {
+            "pipeline_type": "denormalize",
+            "enabled": true
+        }
+    },
+    {
+        "config": "pipeline::custom::denormalize",
+        "identifier": "rdbms_analytics",
+        "allowed_concurrent": ["jdbc_load"],
+        "emr_config": {
+            "release_label": "emr-6.5.0",
+            "master": {
+                "instance_type": "m5.xlarge"
+            },
+            "worker": {
+                "count": "8",
+                "instance_type": "r5.xlarge"
+            },
+            "step_parallelism": 1,
+            "maximize_resource_allocation": "true"
+        }
+    },
+    {
+        "config": "step::denormalize::denormalize_order_line",
+        "identifier": "rdbms_analytics",
+        "enabled": true,
+        "entrypoint": [
+            "/mnt/var/lib/instance-controller/public/scripts/denormalize.py"
+        ],
+        "spark_conf": {
+            "spark.executor.heartbeatInterval": "30s",
+            "spark.network.timeout": "600s",
+            "spark.executor.cores": "1",
+            "spark.task.cpus": "1",
+            "spark.rdd.compress": "true",
+            "spark.executor.memory": "6g",
+            "spark.executor.instances": "32",
+            "spark.dynamicAllocation.enabled": "false",
+            "spark.dynamicAllocation.minExecutors": "4",
+            "spark.dynamicAllocation.maxExecutors": "32",
+            "spark.kryoserializer.buffer.max":  "512m"
+
+        }
+    },
+    {
+        "config": "step::system::public.customer",
+        "identifier": "rdbms_analytics",
+        "hudi_config": {
+            "primary_key": "c_w_id,c_d_id,c_id",
+            "watermark": "trx_seq",
+            "is_partitioned": false
+        },
+        "enabled": true,
+        "spark_jdbc_config": {
+            "dbtable": "public.customer",
+            "partitionColumn": "c_id",
+            "lowerBound": "0",
+            "upperBound": "3000",
+            "numPartitions": "16"
+        },
+        "spark_conf": {
+            "jdbc_load": {
+                "spark.executor.cores": "1",
+                "spark.executor.memory": "2g",
+                "spark.executor.heartbeatInterval": "30s",
+                "spark.network.timeout": "600s",
+                "spark.dynamicAllocation.enabled": "false",
+                "spark.executor.instances": "8"
+            },
+            "incremental_hudi": {
+                "spark.executor.cores": "2",
+                "spark.executor.memory": "2g",
+                "spark.dynamicAllocation.minExecutors": "1",
+                "spark.dynamicAllocation.maxExecutors": "6"
+            },
+            "continuous_hudi": {
+                "spark.executor.cores": "1",
+                "spark.executor.memory": "2g",
+                "spark.dynamicAllocation.minExecutors": "1",
+                "spark.dynamicAllocation.maxExecutors": "4"
+            }
+        }
+    },
+    {
+        "config": "step::system::public.district",
+        "identifier": "rdbms_analytics",
+        "hudi_config": {
+            "primary_key": "d_w_id,d_id",
+            "watermark": "trx_seq",
+            "is_partitioned": false
+        },
+        "enabled": true,
+        "spark_conf": {
+            "continuous_hudi": {
+                "spark.executor.cores": "1",
+                "spark.dynamicAllocation.minExecutors": "0",
+                "spark.dynamicAllocation.maxExecutors": "1"
+            }
+        }
+    },
+    {
+        "config": "step::system::public.item",
+        "identifier": "rdbms_analytics",
+        "enabled": true,
+        "hudi_config": {
+            "primary_key": "i_id",
+            "watermark": "trx_seq",
+            "is_partitioned": false
+        },
+        "spark_conf": {
+            "continuous_hudi": {
+                "spark.executor.cores": "1",
+                "spark.dynamicAllocation.minExecutors": "1",
+                "spark.dynamicAllocation.maxExecutors": "1"
+            }
+        }
+    },
+    {
+        "config": "step::system::public.new_order",
+        "identifier": "rdbms_analytics",
+        "enabled": true,
+        "hudi_config": {
+            "primary_key": "no_w_id,no_d_id,no_o_id",
+            "watermark": "trx_seq",
+            "is_partitioned": false
+        },
+        "spark_conf": {
+            "continuous_hudi": {
+                "spark.executor.cores": "1",
+                "spark.dynamicAllocation.minExecutors": "1",
+                "spark.dynamicAllocation.maxExecutors": "2"
+            }
+        }
+    },
+    {
+        "config": "step::system::public.order_line",
+        "identifier": "rdbms_analytics",
+        "enabled": true,
+        "hudi_config": {
+            "primary_key": "ol_w_id,ol_d_id,ol_o_id,ol_number",
+            "watermark": "trx_seq",
+            "is_partitioned": true,
+            "partition_path": "ol_w_id",
+            "partition_extractor_class": "org.apache.hudi.hive.MultiPartKeysValueExtractor"
+        },
+        "spark_jdbc_config": {
+            "dbtable": "public.order_line",
+            "partitionColumn": "ol_w_id",
+            "lowerBound": "0",
+            "upperBound": "300",
+            "numPartitions": "30"
+        },
+        "spark_conf": {
+            "jdbc_load": {
+                "spark.executor.cores": "2",
+                "spark.executor.memory": "8g",
+                "spark.executor.heartbeatInterval": "120s",
+                "spark.network.timeout": "1200s",
+                "spark.dynamicAllocation.enabled": "false",
+                "spark.executor.instances": "12"
+            },
+            "seed_hudi": {
+                "spark.executor.cores": "2",
+                "spark.executor.memory": "8g",
+                "spark.executor.heartbeatInterval": "90s",
+                "spark.network.timeout": "900s",
+                "spark.dynamicAllocation.enabled": "false",
+                "spark.executor.instances": "12"
+            },
+            "incremental_hudi": {
+                "spark.executor.cores": "2",
+                "spark.executor.memory": "6g",
+                "spark.executor.heartbeatInterval": "30s",
+                "spark.network.timeout": "600s",
+                "spark.dynamicAllocation.minExecutors": "2",
+                "spark.dynamicAllocation.maxExecutors": "12"
+            },
+            "continuous_hudi": {
+                "spark.executor.cores": "1",
+                "spark.executor.memory": "4g",
+                "spark.executor.heartbeatInterval": "30s",
+                "spark.network.timeout": "300s",
+                "spark.dynamicAllocation.minExecutors": "2",
+                "spark.dynamicAllocation.maxExecutors": "6"
+            }
+        }
+    },
+    {
+        "config": "step::system::public.orders",
+        "identifier": "rdbms_analytics",
+        "enabled": true,
+        "hudi_config": {
+            "primary_key": "o_w_id,o_d_id,o_id",
+            "watermark": "trx_seq",
+            "is_partitioned": false
+        },
+        "spark_conf": {
+            "continuous_hudi": {
+                "spark.executor.cores": "1",
+                "spark.dynamicAllocation.minExecutors": "1",
+                "spark.dynamicAllocation.maxExecutors": "2"
+            }
+        }
+    },
+    {
+        "config": "step::system::public.stock",
+        "identifier": "rdbms_analytics",
+        "enabled": true,
+        "hudi_config": {
+            "primary_key": "s_i_id,s_w_id",
+            "watermark": "trx_seq",
+            "is_partitioned": true,
+            "partition_path": "s_w_id",
+            "partition_extractor_class": "org.apache.hudi.hive.MultiPartKeysValueExtractor"
+        },
+        "spark_jdbc_config": {
+            "dbtable": "public.stock",
+            "partitionColumn": "s_i_id",
+            "lowerBound": "0",
+            "upperBound": "100000",
+            "numPartitions": "20"
+        },
+        "spark_conf": {
+            "jdbc_load": {
+                "spark.executor.cores": "2",
+                "spark.executor.memory": "6g",
+                "spark.executor.heartbeatInterval": "120s",
+                "spark.network.timeout": "1200s",
+                "spark.dynamicAllocation.enabled": "false",
+                "spark.executor.instances": "10"
+            },
+            "seed_hudi": {
+                "spark.executor.cores": "2",
+                "spark.executor.memory": "6g",
+                "spark.executor.heartbeatInterval": "90s",
+                "spark.network.timeout": "900s",
+                "spark.dynamicAllocation.enabled": "false",
+                "spark.executor.instances": "10"
+            },
+            "incremental_hudi": {
+                "spark.executor.cores": "2",
+                "spark.executor.memory": "6g",
+                "spark.executor.heartbeatInterval": "30s",
+                "spark.network.timeout": "600s",
+                "spark.dynamicAllocation.minExecutors": "2",
+                "spark.dynamicAllocation.maxExecutors": "8"
+            },
+            "continuous_hudi": {
+                "spark.executor.cores": "1",
+                "spark.executor.memory": "4g",
+                "spark.executor.heartbeatInterval": "30s",
+                "spark.network.timeout": "300s",
+                "spark.dynamicAllocation.minExecutors": "2",
+                "spark.dynamicAllocation.maxExecutors": "6"
+            }
+        }
+    },
+    {
+        "config": "step::system::public.warehouse",
+        "identifier": "rdbms_analytics",
+        "enabled": true,
+        "hudi_config": {
+            "primary_key": "w_id",
+            "watermark": "trx_seq",
+            "is_partitioned": false
+        },
+        "spark_conf": {
+            "continuous_hudi": {
+                "spark.executor.cores": "1",
+                "spark.dynamicAllocation.minExecutors": "1",
+                "spark.dynamicAllocation.maxExecutors": "1"
+            }
+        }
+    }
+]

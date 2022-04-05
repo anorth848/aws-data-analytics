@@ -1,0 +1,62 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Stack components related to code and artifacts for the pipelines
+
+Parameters:
+  ParentStack:
+    Type: String
+    Description: Parent stack this template was launched from, used for naming SSM parameters
+
+Resources:
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'AES256'
+      LifecycleConfiguration:
+        Rules:
+          -
+            Id: Expiration
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 2
+            NoncurrentVersionExpirationInDays: 7
+            ExpiredObjectDeleteMarker: TRUE
+            Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: TRUE
+        BlockPublicPolicy: TRUE
+        IgnorePublicAcls: TRUE
+        RestrictPublicBuckets: TRUE
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      VersioningConfiguration:
+        Status: Enabled
+
+  ArtifactBucketNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Runtime s3 bucket name
+      Name: !Sub '/${ParentStack}/cicd/artifact_bucket/name'
+      Type: String
+      Value: !Ref ArtifactBucket
+
+  ArtifactBucketArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Runtime s3 bucket arn
+      Name: !Sub '/${ParentStack}/cicd/artifact_bucket/arn'
+      Type: String
+      Value: !GetAtt ArtifactBucket.Arn
+
+  ArtifactPrefixUriParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: Runtime s3 bucket arn
+      Name: !Sub '/${ParentStack}/cicd/artifact_bucket/prefix_uri'
+      Type: String
+      Value: !Sub 's3://${ArtifactBucket}/artifacts'
