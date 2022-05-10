@@ -21,7 +21,7 @@
     DbEndpoint=hammerdb.abcdefghijkl.us-east-1.rds.amazonaws.com
     DbUserNameSpark=spark
     DBUserNameDms=awsdms
-    IncrementalSchedule=rate(2 hours)"""
+    IncrementalSchedule='rate(90 minutes)'"""
 
 # Bring your own networking example
  [byon.deploy.parameters]
