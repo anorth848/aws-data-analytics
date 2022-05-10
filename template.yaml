@@ -93,8 +93,8 @@ Parameters:
   IncrementalSchedule:
     Type: String
     Description: The schedule expression for the Hudi incremental jobs
-    Default: 'rate(2 hours)'
-    AllowedPattern: "(rate|cron)\\(.*\\)"
+    Default: rate(2 hours)
+    AllowedPattern: (rate|cron)\(.*\)
 
 Conditions:
   CreateConsumptionStack: !Equals [ !Ref CreateConsumptionStack, 'TRUE' ]
