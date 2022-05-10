@@ -26,10 +26,6 @@ Resources:
   #  With error: The IAM Role arn:aws:iam::${AccountId}:role/dms-vpc-role is not configured properly.
   #  This can be done through the GUI by manually configuring a Subnet group, or
   #  by Parameter CreateDmsVpcRole=TRUE in this template. If the role already exists, just set this to FALSE
-  #  If DMS has not been previously used in this account, you will need to create the dms-vpc-role or DMS resources in this stack will fail
-  #  With error: The IAM Role arn:aws:iam::831275422924:role/dms-vpc-role is not configured properly.
-  #  This can be done through the GUI by manually configuring a Subnet group, or
-  #  by Parameter CreateDmsVpcRole=TRUE in template runtime-infrastructure.yaml. If the role already exists, just set this to FALSE
   DmsVpcRole:
     Type: AWS::IAM::Role
     DeletionPolicy: Retain
