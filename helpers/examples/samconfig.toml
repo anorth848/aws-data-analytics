@@ -24,7 +24,7 @@
     DbEndpoint=pg-db.endpoint.us-east-1.rds.amazonaws.com
     DbUserNameSpark=spark
     DBUserNameDms=awsdms
-    IncrementalSchedule=rate(2 hours)"""
+    IncrementalSchedule='rate(2 hours)'"""
 
  [dr.deploy.parameters]
  stack_name = "rdbms-analytics-dr"
@@ -44,7 +44,7 @@
     DbEndpoint=pg-db.endpoint.us-east-1.rds.amazonaws.com
     DbUserNameSpark=spark
     DBUserNameDms=awsdms
-    IncrementalSchedule=rate(2 hours)"""
+    IncrementalSchedule='rate(2 hours)'"""
 
  # Example of BYO VPC
  [novpc.deploy.parameters]
@@ -68,5 +68,5 @@
     DbEndpoint=pg-db.endpoint.us-east-1.rds.amazonaws.com
     DbUserNameSpark=spark
     DBUserNameDms=awsdms
-    IncrementalSchedule=rate(2 hours)"""
+    IncrementalSchedule='rate(2 hours)'"""
 
