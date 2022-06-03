@@ -231,8 +231,9 @@ Once the above installation and configuration is complete, you are ready to star
 
 #### Enable the system and load the data lake
 
+- Start the CDC replication task created previously, this must be done before the next step or there will be missing data
 - Enabled the full load
-  - `make STACK_NAME=hudi-lake REGION=us-east-1 enable_full`
+  - `make STACK_NAME=hudi-lake REGION=us-east-1 enable_jdbc`
   - This will enable the full load schedule, which runs every 7 days (from the time you enabled it)
   - The reason this runs every 7 days is to make recovery in the event of a failure faster
 - Assuming you have next_pipeline configured in your pipeline::config::<pipeline_type> dynamodb config entries EG:

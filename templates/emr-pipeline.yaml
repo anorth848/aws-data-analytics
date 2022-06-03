@@ -172,7 +172,9 @@ Resources:
                 Effect: Allow
                 Action:
                   - iam:PassRole
-                Resource: !GetAtt EmrEc2Role.Arn
+                Resource:
+                  - !GetAtt EmrEc2Role.Arn
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/${EmrServiceRole}'
               - Sid: AllowSns
                 Effect: Allow
                 Action:
