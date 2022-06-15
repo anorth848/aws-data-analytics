@@ -138,8 +138,24 @@ def main():
         'hoodie.datasource.hive_sync.database': db_name,
         'hoodie.datasource.hive_sync.enable': 'true',
         'hoodie.datasource.hive_sync.table': 'analytics_order_line',
-        'hoodie.datasource.hive_sync.partition_extractor_class': 'org.apache.hudi.hive.SlashEncodedDayPartitionValueExtractor'
+        'hoodie.datasource.hive_sync.partition_extractor_class': 'org.apache.hudi.hive.SlashEncodedDayPartitionValueExtractor',
+        'hoodie.write.markers.type': 'timeline_server_based',
+        'hoodie.archive.merge.enable': 'true',
+        'hoodie.compact.inline': 'true',
+        'hoodie.cleaner.commits.retained': '5',
+        'hoodie.clean.automatic': 'true',
+        'hoodie.clean.async': 'true',
+        'hoodie.keep.max.commits': '15',
+        'hoodie.clean.min.commits': '5',
+        'hoodie.clean.max.commits': '10',
+        'hoodie.clustering.async.enabled': 'true',
+        'hoodie.clustering.async.max.commits': '4',
+        'hoodie.clustering.plan.strategy.target.file.max.bytes': '1073741824',
+        'hoodie.clustering.plan.strategy.small.file.limit': '629145600',
+        'hoodie.clustering.execution.strategy.class': 'org.apache.hudi.client.clustering.run.strategy.SparkSortAndSizeExecutionStrategy',
+        'hoodie.clustering.preserve.commit.metadata': 'true'
     }
+
     if dn_table_exists is False:
         hudi_conf['hoodie.datasource.write.operation'] = 'bulk_insert'
         hudi_conf['hoodie.bulkinsert.sort.mode'] = 'PARTITION_SORT'

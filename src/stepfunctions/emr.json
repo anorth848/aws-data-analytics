@@ -106,7 +106,9 @@
                             "spark.sql.hive.convertMetastore": "false",
                             "spark.jars": "/usr/lib/hudi/hudi-spark-bundle.jar,/usr/lib/spark/external/lib/spark-avro.jar,/usr/lib/hudi/hudi-utilities-bundle.jar",
                             "spark.driver.extraJavaOptions": "-XX:+PrintTenuringDistribution -XX:+PrintGCDetails -XX:+PrintGCDateStamps -XX:+PrintGCApplicationStoppedTime -XX:+PrintGCApplicationConcurrentTime -XX:+PrintGCTimeStamps -XX:+HeapDumpOnOutOfMemoryError",
-                            "spark.executor.extraJavaOptions": "-XX:+PrintTenuringDistribution -XX:+PrintGCDetails -XX:+PrintGCDateStamps -XX:+PrintGCApplicationStoppedTime -XX:+PrintGCApplicationConcurrentTime -XX:+PrintGCTimeStamps -XX:+HeapDumpOnOutOfMemoryError"
+                            "spark.executor.extraJavaOptions": "-XX:+PrintTenuringDistribution -XX:+PrintGCDetails -XX:+PrintGCDateStamps -XX:+PrintGCApplicationStoppedTime -XX:+PrintGCApplicationConcurrentTime -XX:+PrintGCTimeStamps -XX:+HeapDumpOnOutOfMemoryError",
+                            "spark.scheduler.mode": "FAIR",
+                            "spark.scheduler.allocation.file": "/etc/spark/conf/fairscheduler.xml.template"
                         }
                     },
                     {

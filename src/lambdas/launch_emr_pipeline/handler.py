@@ -94,7 +94,22 @@ def get_hudi_configs(source_table_name, target_table_name, database_name, table_
         'hoodie.datasource.write.precombine.field': precombine_field,
         'hoodie.datasource.hive_sync.database': glue_database,
         'hoodie.datasource.hive_sync.enable': 'true',
-        'hoodie.datasource.hive_sync.table': target_table_name
+        'hoodie.datasource.hive_sync.table': target_table_name,
+        'hoodie.write.markers.type': 'timeline_server_based',
+        'hoodie.archive.merge.enable': 'true',
+        'hoodie.compact.inline': 'true',
+        'hoodie.cleaner.commits.retained': '5',
+        'hoodie.clean.automatic': 'true',
+        'hoodie.clean.async': 'true',
+        'hoodie.keep.max.commits': '15',
+        'hoodie.clean.min.commits': '5',
+        'hoodie.clean.max.commits': '10',
+        'hoodie.clustering.async.enabled': 'true',
+        'hoodie.clustering.async.max.commits': '4',
+        'hoodie.clustering.plan.strategy.target.file.max.bytes': '1073741824',
+        'hoodie.clustering.plan.strategy.small.file.limit': '629145600',
+        'hoodie.clustering.execution.strategy.class': 'org.apache.hudi.client.clustering.run.strategy.SparkSortAndSizeExecutionStrategy',
+        'hoodie.clustering.preserve.commit.metadata': 'true'
     }
 
     if pipeline_type == 'seed_hudi':
@@ -172,7 +187,6 @@ def generate_system_steps(configs, pipeline_type):
                 spark_submit_args.extend([
                     '--class', 'org.apache.hudi.utilities.deltastreamer.HoodieDeltaStreamer',
                     '/usr/lib/hudi/hudi-utilities-bundle.jar',
-                    '--table-type', 'COPY_ON_WRITE',
                     '--source-class', 'org.apache.hudi.utilities.sources.ParquetDFSSource',
                     '--enable-hive-sync',
                     '--target-table', target_table_name,
@@ -180,10 +194,16 @@ def generate_system_steps(configs, pipeline_type):
                     '--source-ordering-field', config['hudi_config']['watermark']
                 ])
 
+                if 'table_type' in config['hudi_config']:
+                    table_type = config['hudi_config']['table_type']
+                else:
+                    table_type = 'COPY_ON_WRITE'
+                spark_submit_args.extend(['--table-type', table_type])
+
                 if 'transformer_class' in config['hudi_config']:
                     spark_submit_args.extend(['--transformer-class', config['hudi_config']['transformer_class']])
 
-                if pipeline_type == 'seed_hudi':
+                if pipeline_type == 'seed_hudi' or 'op' in config['hudi_config']:
                     spark_submit_args.extend(['--op', 'BULK_INSERT'])
 
                 hudi_configs = get_hudi_configs(source_table_name, target_table_name, target_db_name,
