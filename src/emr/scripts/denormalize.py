@@ -58,9 +58,13 @@ def main():
         else:
             raise
 
+    source_tables = ['hammerdb_public_orders','hammerdb_public_customer', 'hammerdb_public_district',
+                   'hammerdb_public_warehouse', 'hammerdb_public_item', 'hammerdb_public_order_line']
+
+    source_tables_dict = {"SourceTables": source_tables}
+
     # Register tables as temporary views
-    for table in ['hammerdb_public_orders','hammerdb_public_customer', 'hammerdb_public_district',
-                   'hammerdb_public_warehouse', 'hammerdb_public_item', 'hammerdb_public_order_line']:
+    for table in source_tables:
 
         # We are using snapshot reads for dimension tables and incremental for order_line (if possible)
         if dn_table_exists is True and table == 'hammerdb_public_order_line':
@@ -139,21 +143,21 @@ def main():
         'hoodie.datasource.hive_sync.enable': 'true',
         'hoodie.datasource.hive_sync.table': 'analytics_order_line',
         'hoodie.datasource.hive_sync.partition_extractor_class': 'org.apache.hudi.hive.SlashEncodedDayPartitionValueExtractor',
-        'hoodie.write.markers.type': 'timeline_server_based',
+        'hoodie.write.markers.type': 'TIMELINE_SERVER_BASED',
         'hoodie.archive.merge.enable': 'true',
-        'hoodie.compact.inline': 'true',
         'hoodie.cleaner.commits.retained': '5',
         'hoodie.clean.automatic': 'true',
         'hoodie.clean.async': 'true',
+        'hoodie.clean.max.commits': '2',
+        'hoodie.keep.min.commits': '10',
         'hoodie.keep.max.commits': '15',
-        'hoodie.clean.min.commits': '5',
-        'hoodie.clean.max.commits': '10',
         'hoodie.clustering.async.enabled': 'true',
         'hoodie.clustering.async.max.commits': '4',
         'hoodie.clustering.plan.strategy.target.file.max.bytes': '1073741824',
         'hoodie.clustering.plan.strategy.small.file.limit': '629145600',
         'hoodie.clustering.execution.strategy.class': 'org.apache.hudi.client.clustering.run.strategy.SparkSortAndSizeExecutionStrategy',
-        'hoodie.clustering.preserve.commit.metadata': 'true'
+        'hoodie.clustering.preserve.commit.metadata': 'true',
+        'hoodie.datasource.hive_sync.table_properties': f'Lineage={json.dumps(source_tables_dict)}'
     }
 
     if dn_table_exists is False:

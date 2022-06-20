@@ -95,15 +95,14 @@ def get_hudi_configs(source_table_name, target_table_name, database_name, table_
         'hoodie.datasource.hive_sync.database': glue_database,
         'hoodie.datasource.hive_sync.enable': 'true',
         'hoodie.datasource.hive_sync.table': target_table_name,
-        'hoodie.write.markers.type': 'timeline_server_based',
+        'hoodie.write.markers.type': 'TIMELINE_SERVER_BASED',
         'hoodie.archive.merge.enable': 'true',
-        'hoodie.compact.inline': 'true',
         'hoodie.cleaner.commits.retained': '5',
         'hoodie.clean.automatic': 'true',
         'hoodie.clean.async': 'true',
+        'hoodie.clean.max.commits': '2',
+        'hoodie.keep.min.commits': '10',
         'hoodie.keep.max.commits': '15',
-        'hoodie.clean.min.commits': '5',
-        'hoodie.clean.max.commits': '10',
         'hoodie.clustering.async.enabled': 'true',
         'hoodie.clustering.async.max.commits': '4',
         'hoodie.clustering.plan.strategy.target.file.max.bytes': '1073741824',
@@ -138,6 +137,9 @@ def get_hudi_configs(source_table_name, target_table_name, database_name, table_
             key_generator = 'org.apache.hudi.keygen.SimpleKeyGenerator'
 
     hudi_conf['hoodie.datasource.write.keygenerator.class'] = key_generator
+
+    if 'table_type' in table_config and table_config['table_type'] == 'MERGE_ON_READ':
+        hudi_conf['hoodie.compact.inline'] = 'true'
 
     if 'transformer_sql' in table_config:
         hudi_conf['hoodie.deltastreamer.transformer.sql'] = table_config['transformer_sql']
@@ -188,7 +190,7 @@ def generate_system_steps(configs, pipeline_type):
                     '--class', 'org.apache.hudi.utilities.deltastreamer.HoodieDeltaStreamer',
                     '/usr/lib/hudi/hudi-utilities-bundle.jar',
                     '--source-class', 'org.apache.hudi.utilities.sources.ParquetDFSSource',
-                    '--enable-hive-sync',
+                    '--enable-sync',
                     '--target-table', target_table_name,
                     '--target-base-path', os.path.join(silver_lake_uri, target_table_name, ''),
                     '--source-ordering-field', config['hudi_config']['watermark']

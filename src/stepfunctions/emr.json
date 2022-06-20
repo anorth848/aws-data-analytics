@@ -108,7 +108,7 @@
                             "spark.driver.extraJavaOptions": "-XX:+PrintTenuringDistribution -XX:+PrintGCDetails -XX:+PrintGCDateStamps -XX:+PrintGCApplicationStoppedTime -XX:+PrintGCApplicationConcurrentTime -XX:+PrintGCTimeStamps -XX:+HeapDumpOnOutOfMemoryError",
                             "spark.executor.extraJavaOptions": "-XX:+PrintTenuringDistribution -XX:+PrintGCDetails -XX:+PrintGCDateStamps -XX:+PrintGCApplicationStoppedTime -XX:+PrintGCApplicationConcurrentTime -XX:+PrintGCTimeStamps -XX:+HeapDumpOnOutOfMemoryError",
                             "spark.scheduler.mode": "FAIR",
-                            "spark.scheduler.allocation.file": "/etc/spark/conf/fairscheduler.xml.template"
+                            "spark.scheduler.allocation.file": "file:///etc/spark/conf/fairscheduler.xml.template"
                         }
                     },
                     {
