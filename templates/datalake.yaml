@@ -61,7 +61,7 @@ Resources:
             ExpiredObjectDeleteMarker: TRUE
             Status: Enabled
           - Id: ExpireIncremental
-            ExpirationInDays: 14
+            ExpirationInDays: 8
             Prefix: !Sub '${UseCase}/incremental/'
             Status: Enabled
       PublicAccessBlockConfiguration:

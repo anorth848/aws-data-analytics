@@ -89,26 +89,15 @@ def get_hudi_configs(source_table_name, target_table_name, database_name, table_
     glue_database = database_name
 
     hudi_conf = {
+        'hoodie.clustering.inline': 'true',
+        'hoodie.archive.merge.enable': 'true',
         'hoodie.table.name': target_table_name,
         'hoodie.datasource.write.recordkey.field': primary_key,
         'hoodie.datasource.write.precombine.field': precombine_field,
         'hoodie.datasource.hive_sync.database': glue_database,
         'hoodie.datasource.hive_sync.enable': 'true',
         'hoodie.datasource.hive_sync.table': target_table_name,
-        'hoodie.write.markers.type': 'TIMELINE_SERVER_BASED',
-        'hoodie.archive.merge.enable': 'true',
-        'hoodie.cleaner.commits.retained': '5',
-        'hoodie.clean.automatic': 'true',
-        'hoodie.clean.async': 'true',
-        'hoodie.clean.max.commits': '2',
-        'hoodie.keep.min.commits': '10',
-        'hoodie.keep.max.commits': '15',
-        'hoodie.clustering.async.enabled': 'true',
-        'hoodie.clustering.async.max.commits': '4',
-        'hoodie.clustering.plan.strategy.target.file.max.bytes': '1073741824',
-        'hoodie.clustering.plan.strategy.small.file.limit': '629145600',
-        'hoodie.clustering.execution.strategy.class': 'org.apache.hudi.client.clustering.run.strategy.SparkSortAndSizeExecutionStrategy',
-        'hoodie.clustering.preserve.commit.metadata': 'true'
+        'hoodie.datasource.clustering.inline.enable': 'true'
     }
 
     if pipeline_type == 'seed_hudi':
@@ -118,6 +107,10 @@ def get_hudi_configs(source_table_name, target_table_name, database_name, table_
     elif pipeline_type in ['incremental_hudi', 'continuous_hudi']:
         source_s3uri = os.path.join(bronze_lake_uri, 'incremental', target_table_name.replace('_', '/', 2), '')
         hudi_conf['hoodie.datasource.write.operation'] = 'upsert'
+        hudi_conf['hoodie.cleaner.commits.retained'] = '5'
+        hudi_conf['hoodie.clean.automatic'] = 'true'
+        hudi_conf['hoodie.keep.min.commits'] = '10'
+        hudi_conf['hoodie.keep.max.commits'] = '15'
     else:
         raise ValueError(f'Operation {pipeline_type} not yet supported.')
 

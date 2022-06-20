@@ -129,11 +129,9 @@ def main():
         ORDER BY aol_sk, ol_number, ol_instant_time
     ''')
 
-    # If we are doing a full load because the table doesn't exist, persist it.. we'll need it for aggregation step as well
-    if dn_table_exists is False:
-        df.persist()
-
     hudi_conf = {
+        'hoodie.clustering.inline': 'true',
+        'hoodie.archive.merge.enable': 'true',
         'hoodie.table.name': 'analytics_order_line',
         'hoodie.datasource.write.recordkey.field': 'aol_sk,ol_number',
         'hoodie.datasource.write.precombine.field': 'ol_instant_time',
@@ -143,20 +141,6 @@ def main():
         'hoodie.datasource.hive_sync.enable': 'true',
         'hoodie.datasource.hive_sync.table': 'analytics_order_line',
         'hoodie.datasource.hive_sync.partition_extractor_class': 'org.apache.hudi.hive.SlashEncodedDayPartitionValueExtractor',
-        'hoodie.write.markers.type': 'TIMELINE_SERVER_BASED',
-        'hoodie.archive.merge.enable': 'true',
-        'hoodie.cleaner.commits.retained': '5',
-        'hoodie.clean.automatic': 'true',
-        'hoodie.clean.async': 'true',
-        'hoodie.clean.max.commits': '2',
-        'hoodie.keep.min.commits': '10',
-        'hoodie.keep.max.commits': '15',
-        'hoodie.clustering.async.enabled': 'true',
-        'hoodie.clustering.async.max.commits': '4',
-        'hoodie.clustering.plan.strategy.target.file.max.bytes': '1073741824',
-        'hoodie.clustering.plan.strategy.small.file.limit': '629145600',
-        'hoodie.clustering.execution.strategy.class': 'org.apache.hudi.client.clustering.run.strategy.SparkSortAndSizeExecutionStrategy',
-        'hoodie.clustering.preserve.commit.metadata': 'true',
         'hoodie.datasource.hive_sync.table_properties': f'Lineage={json.dumps(source_tables_dict)}'
     }
 
@@ -164,10 +148,17 @@ def main():
         hudi_conf['hoodie.datasource.write.operation'] = 'bulk_insert'
         hudi_conf['hoodie.bulkinsert.sort.mode'] = 'PARTITION_SORT'
         hudi_conf['hoodie.bulkinsert.shuffle.parallelism'] = '32'
+
         writer = df.write.format('org.apache.hudi').mode('overwrite')
     else:
         hudi_conf['hoodie.datasource.write.operation'] = 'upsert'
-        hudi_conf['hoodie.upsert.shuffle.parallelism'] = '32'
+        hudi_conf['hoodie.upsert.shuffle.parallelism'] = '256'
+        hudi_conf['hoodie.cleaner.commits.retained'] = '5'
+        hudi_conf['hoodie.clean.automatic'] = 'true'
+        hudi_conf['hoodie.clean.max.commits'] = '2'
+        hudi_conf['hoodie.keep.min.commits'] = '10'
+        hudi_conf['hoodie.keep.max.commits'] = '15'
+
         writer = df.write.format('org.apache.hudi').mode('append')
 
     writer.options(**hudi_conf)\
