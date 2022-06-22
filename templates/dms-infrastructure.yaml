@@ -139,18 +139,18 @@ Resources:
                   - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/bronze/arn}}/${UseCase}/incremental/'
                   - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/bronze/arn}}/${UseCase}/incremental/*'
 
-  DmsLakeDbPermissions:
-    Type: AWS::LakeFormation::Permissions
-    DependsOn: DmsS3EndpointRole
-    Properties:
-      DataLakePrincipal:
-        DataLakePrincipalIdentifier: !GetAtt DmsS3EndpointRole.Arn
-      Permissions:
-        - ALL
-      Resource:
-        DatabaseResource:
-          CatalogId: !Ref AWS::AccountId
-          Name: !Join ['', [ '{{resolve:ssm:/', !Ref ParentStack, '/lake/glue/db/name', '}}' ] ]
+#  DmsLakeDbPermissions:
+#    Type: AWS::LakeFormation::Permissions
+#    DependsOn: DmsS3EndpointRole
+#    Properties:
+#      DataLakePrincipal:
+#        DataLakePrincipalIdentifier: !GetAtt DmsS3EndpointRole.Arn
+#      Permissions:
+#        - ALL
+#      Resource:
+#        DatabaseResource:
+#          CatalogId: !Ref AWS::AccountId
+#          Name: !Join ['', [ '{{resolve:ssm:/', !Ref ParentStack, '/lake/glue/db/name', '}}' ] ]
 
   DmsLakeLocationPermissions:
     Type: AWS::LakeFormation::Permissions
@@ -167,18 +167,18 @@ Resources:
               !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
           ] ]
 
-  DmsLakeTablePermissions:
-    Type: AWS::LakeFormation::Permissions
-    Properties:
-      DataLakePrincipal:
-        DataLakePrincipalIdentifier: !GetAtt DmsS3EndpointRole.Arn
-      Permissions:
-        - ALL
-      Resource:
-        TableResource:
-          CatalogId: !Ref AWS::AccountId
-          DatabaseName: !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
-          TableWildcard: {}
+#  DmsLakeTablePermissions:
+#    Type: AWS::LakeFormation::Permissions
+#    Properties:
+#      DataLakePrincipal:
+#        DataLakePrincipalIdentifier: !GetAtt DmsS3EndpointRole.Arn
+#      Permissions:
+#        - ALL
+#      Resource:
+#        TableResource:
+#          CatalogId: !Ref AWS::AccountId
+#          DatabaseName: !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
+#          TableWildcard: {}
 
   DmsS3Endpoint:
     Type: AWS::DMS::Endpoint

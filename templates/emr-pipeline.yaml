@@ -35,7 +35,72 @@ Conditions:
     - 'TRUE'
 
 Resources:
-  EmrEc2Role:
+  EmrEc2CommonPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Policy to attach to EMR EC2 JobFlow roles
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: ResourceStar
+            Effect: Allow
+            Action:
+              - ec2:Describe*
+              - elasticmapreduce:Describe*
+              - elasticmapreduce:ListBootstrapActions
+              - elasticmapreduce:ListClusters
+              - elasticmapreduce:ListInstanceGroups
+              - elasticmapreduce:ListInstances
+              - elasticmapreduce:ListSteps
+              - cloudwatch:*
+              - s3:GetBucketLocation
+              - s3:ListAllMyBuckets*
+              - glue:*Get*
+              - lakeformation:GetDataAccess
+              - lakeformation:GetMetadataAccess
+            Resource: '*'
+          - Sid: S3Read
+            Effect: Allow
+            Action:
+              - s3:List*
+              - s3:Get*
+            Resource:
+              - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/bronze/arn}}'
+              - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/silver/arn}}'
+              - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/gold/arn}}'
+              - !Join [ '', [ '{{resolve:ssm:/', !Ref ParentStack, '/runtime/bucket/arn', '}}' ] ]
+              - !Join [ '', [ '{{resolve:ssm:/', !Ref ParentStack, '/runtime/bucket/arn', '}}/*' ] ]
+              - !Join [ '', [ '{{resolve:ssm:/', !Ref ParentStack, '/cicd/artifact_bucket/arn', '}}' ] ]
+              - !Join [ '', [ '{{resolve:ssm:/', !Ref ParentStack, '/cicd/artifact_bucket/arn', '}}/*' ] ]
+              - !Sub 'arn:${AWS::Partition}:s3:::aws-logs-${AWS::AccountId}-${AWS::Region}'
+              - !Sub 'arn:${AWS::Partition}:s3:::aws-logs-${AWS::AccountId}-${AWS::Region}/*'
+          - Sid: S3Write
+            Effect: Allow
+            Action:
+              - s3:*
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::aws-logs-${AWS::AccountId}-${AWS::Region}/elasticmapreduce/*'
+              - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/bronze/arn}}/${UseCase}/*'
+              - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/silver/arn}}/${UseCase}/*'
+              - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/gold/arn}}/${UseCase}/*'
+          - Sid: GlueAccountLevel
+            Effect: Allow
+            Action:
+              - glue:CreateTable
+              - glue:UpdateTable
+              - glue:DeleteTable
+              - glue:CreatePartition
+              - glue:BatchCreatePartition
+              - glue:UpdatePartition
+              - glue:DeletePartition
+              - glue:BatchDeletePartition
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog'
+              - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${UseCase}'
+              - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${UseCase}/*'
+              - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:tableVersion/${UseCase}/*'
+
+  EmrEc2BronzeRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument: {
@@ -52,7 +117,7 @@ Resources:
       }
       Description: Role for EMR EC2 instances
       ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonElasticMapReduceforEC2Role
+        - !Ref EmrEc2CommonPolicy
       MaxSessionDuration: 43200
       Policies:
         - PolicyName: FullLoadPolicy
@@ -65,20 +130,60 @@ Resources:
                   - secretsmanager:GetSecretValue
                 Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ParentStack}/*'
 
-  EmrEc2InstanceProfile:
-    DependsOn: EmrEc2Role
+  EmrEc2SilverRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "ec2.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole" ]
+          }
+        ]
+      }
+      Description: Role for EMR EC2 instances
+      ManagedPolicyArns:
+        - !Ref EmrEc2CommonPolicy
+      MaxSessionDuration: 43200
+
+  EmrEc2GoldRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "ec2.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole" ]
+          }
+        ]
+      }
+      Description: Role for EMR EC2 instances
+      ManagedPolicyArns:
+        - !Ref EmrEc2CommonPolicy
+      MaxSessionDuration: 43200
+
+  EmrEc2BronzeInstanceProfile:
+    DependsOn: EmrEc2BronzeRole
     Type: AWS::IAM::InstanceProfile
     Properties:
-      InstanceProfileName: !Ref EmrEc2Role
+      InstanceProfileName: !Ref EmrEc2BronzeRole
       Roles:
-        - !Ref EmrEc2Role
+        - !Ref EmrEc2BronzeRole
 
-  EmrLakeDbPermissions:
+  EmrEc2BronzeLakeDbPermissions:
     Type: AWS::LakeFormation::Permissions
-    DependsOn: EmrEc2Role
+    DependsOn: EmrEc2BronzeRole
     Properties:
       DataLakePrincipal:
-        DataLakePrincipalIdentifier: !GetAtt EmrEc2Role.Arn
+        DataLakePrincipalIdentifier: !GetAtt EmrEc2BronzeRole.Arn
       Permissions:
         - ALL
       Resource:
@@ -86,11 +191,53 @@ Resources:
           CatalogId: !Ref AWS::AccountId
           Name: !Join ['', [ '{{resolve:ssm:/', !Ref ParentStack, '/lake/glue/db/name', '}}' ] ]
 
+  EmrEc2SilverInstanceProfile:
+    DependsOn: EmrEc2SilverRole
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Ref EmrEc2SilverRole
+      Roles:
+        - !Ref EmrEc2SilverRole
+
+  EmrEc2SilverLakeDbPermissions:
+    Type: AWS::LakeFormation::Permissions
+    DependsOn: EmrEc2SilverRole
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !GetAtt EmrEc2SilverRole.Arn
+      Permissions:
+        - ALL
+      Resource:
+        DatabaseResource:
+          CatalogId: !Ref AWS::AccountId
+          Name: !Join [ '', [ '{{resolve:ssm:/', !Ref ParentStack, '/lake/glue/db/name', '}}' ] ]
+
+  EmrEc2GoldInstanceProfile:
+    DependsOn: EmrEc2GoldRole
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Ref EmrEc2GoldRole
+      Roles:
+        - !Ref EmrEc2GoldRole
+
+  EmrEc2GoldLakeDbPermissions:
+    Type: AWS::LakeFormation::Permissions
+    DependsOn: EmrEc2GoldRole
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !GetAtt EmrEc2GoldRole.Arn
+      Permissions:
+        - ALL
+      Resource:
+        DatabaseResource:
+          CatalogId: !Ref AWS::AccountId
+          Name: !Join [ '', [ '{{resolve:ssm:/', !Ref ParentStack, '/lake/glue/db/name', '}}' ] ]
+
   EmrBronzeLakeLocationPermissions:
     Type: AWS::LakeFormation::Permissions
     Properties:
       DataLakePrincipal:
-        DataLakePrincipalIdentifier: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${EmrEc2Role}'
+        DataLakePrincipalIdentifier: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${EmrEc2BronzeRole}'
       Permissions:
         - DATA_LOCATION_ACCESS
       Resource:
@@ -101,11 +248,11 @@ Resources:
               !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
           ] ]
 
-  EmrSilverLakeLocationPermissions:
+  EmrEc2SilverTargetLakeLocationPermissions:
     Type: AWS::LakeFormation::Permissions
     Properties:
       DataLakePrincipal:
-        DataLakePrincipalIdentifier: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${EmrEc2Role}'
+        DataLakePrincipalIdentifier: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${EmrEc2SilverRole}'
       Permissions:
         - DATA_LOCATION_ACCESS
       Resource:
@@ -116,11 +263,26 @@ Resources:
               !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
           ] ]
 
-  EmrGoldLakeLocationPermissions:
+  EmrEc2SilverSourceLakeLocationPermissions:
     Type: AWS::LakeFormation::Permissions
     Properties:
       DataLakePrincipal:
-        DataLakePrincipalIdentifier: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${EmrEc2Role}'
+        DataLakePrincipalIdentifier: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${EmrEc2SilverRole}'
+      Permissions:
+        - DATA_LOCATION_ACCESS
+      Resource:
+        DataLocationResource:
+          CatalogId: !Ref AWS::AccountId
+          S3Resource: !Join [ "/", [
+            !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/bronze/arn}}',
+            !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
+          ] ]
+
+  EmrGoldLakeTargetLocationPermissions:
+    Type: AWS::LakeFormation::Permissions
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${EmrEc2GoldRole}'
       Permissions:
         - DATA_LOCATION_ACCESS
       Resource:
@@ -131,11 +293,52 @@ Resources:
               !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
           ] ]
 
-  EmrLakeTablePermissions:
+  EmrGoldLakeSourceLocationPermissions:
     Type: AWS::LakeFormation::Permissions
     Properties:
       DataLakePrincipal:
-        DataLakePrincipalIdentifier: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${EmrEc2Role}'
+        DataLakePrincipalIdentifier: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${EmrEc2GoldRole}'
+      Permissions:
+        - DATA_LOCATION_ACCESS
+      Resource:
+        DataLocationResource:
+          CatalogId: !Ref AWS::AccountId
+          S3Resource: !Join [ "/", [
+            !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/gold/arn}}',
+            !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
+          ] ]
+
+  EmrEc2BronzeLakeTablePermissions:
+    Type: AWS::LakeFormation::Permissions
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${EmrEc2BronzeRole}'
+      Permissions:
+        - ALL
+      Resource:
+        TableResource:
+          CatalogId: !Ref AWS::AccountId
+          DatabaseName: !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
+          TableWildcard: {}
+
+  EmrEc2SilverLakeTablePermissions:
+    Type: AWS::LakeFormation::Permissions
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${EmrEc2SilverRole}'
+      Permissions:
+        - ALL
+      Resource:
+        TableResource:
+          CatalogId: !Ref AWS::AccountId
+          DatabaseName: !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
+          TableWildcard: {}
+
+  EmrEc2GoldLakeTablePermissions:
+    Type: AWS::LakeFormation::Permissions
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${EmrEc2GoldRole}'
       Permissions:
         - ALL
       Resource:
@@ -173,7 +376,9 @@ Resources:
                 Action:
                   - iam:PassRole
                 Resource:
-                  - !GetAtt EmrEc2Role.Arn
+                  - !GetAtt EmrEc2BronzeRole.Arn
+                  - !GetAtt EmrEc2SilverRole.Arn
+                  - !GetAtt EmrEc2GoldRole.Arn
                   - !Sub 'arn:aws:iam::${AWS::AccountId}:role/${EmrServiceRole}'
               - Sid: AllowSns
                 Effect: Allow
@@ -191,7 +396,9 @@ Resources:
         EmrEc2SubnetIdB: !Sub '{{resolve:ssm:/${ParentStack}/network/subnet/b/id}}'
         EmrLogUri: !Sub 's3n://aws-logs-${AWS::AccountId}-${AWS::Region}/elasticmapreduce/${ParentStack}/'
         EmrServiceRole: !Ref EmrServiceRole
-        EmrJobFlowRole: !Ref EmrEc2InstanceProfile
+        EmrBronzeJobFlowRole: !Ref EmrEc2BronzeInstanceProfile
+        EmrSilverJobFlowRole: !Ref EmrEc2SilverInstanceProfile
+        EmrGoldJobFlowRole: !Ref EmrEc2GoldInstanceProfile
         RuntimeSnsTopicArn: !Sub '{{resolve:ssm:/${ParentStack}/runtime/sns/topic/arn}}'
         SilverLakeS3Uri: !Join [ '', [ '{{resolve:ssm:/', !Ref ParentStack, '/lake/bucket/silver/prefix_uri', '}}' ] ]
         BronzeLakeS3Uri: !Join [ '', [ '{{resolve:ssm:/', !Ref ParentStack, '/lake/bucket/bronze/prefix_uri', '}}' ] ]
@@ -199,6 +406,28 @@ Resources:
         Region: !Ref AWS::Region
       Role: !GetAtt EmrStepFunctionRole.Arn
       Type: STANDARD
+
+  EmrStepFunctionExecutionTimeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      ActionsEnabled: true
+      AlarmActions:
+        - !Sub '{{resolve:ssm:/${ParentStack}/runtime/sns/topic/arn}}'
+      AlarmDescription: Detect long running pipeline
+      ComparisonOperator: GreaterThanThreshold
+      DatapointsToAlarm: 1
+      Dimensions:
+        - Name:   StateMachineArn
+          Value:  !GetAtt EmrStepFunction.Arn
+      EvaluationPeriods: 1
+      MetricName: ExecutionTime
+      Namespace: AWS/States
+      Period: 300
+      Statistic: Maximum
+      #Threshold: 6000000.0
+      Threshold: 3600.0
+      TreatMissingData: ignore
+      Unit: Seconds
 
   LaunchEmrPipelineLambdaRole:
     Type: AWS::IAM::Role

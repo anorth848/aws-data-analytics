@@ -1,7 +1,51 @@
 {
     "Comment": "Launch the EMR cluster and run job steps",
-    "StartAt": "LaunchEMR",
+    "StartAt": "DecideEmrJobFlowRole",
     "States": {
+        "DecideEmrJobFlowRole": {
+            "Type": "Choice",
+            "Comment": "Based on pipeline type, decide role",
+            "Choices": [
+                {
+                    "Variable": "$.lambda.pipeline_type",
+                    "StringEquals": "jdbc_load",
+                    "Next": "PassBronze"
+                },
+                {
+                    "Variable": "$.lambda.pipeline_type",
+                    "StringMatches": "*_hudi",
+                    "Next": "PassSilver"
+                }
+            ],
+            "Default": "PassGold"
+        },
+        "PassBronze": {
+            "Type": "Pass",
+            "Comment": "Pass the bronze role for EMR to Assume",
+            "Parameters": {
+                "EmrJobFlowRole": "${EmrBronzeJobFlowRole}"
+            },
+            "ResultPath": "$.lambda.emr_role",
+            "Next": "LaunchEMR"
+        },
+        "PassSilver": {
+            "Type": "Pass",
+            "Comment": "Pass the silver role for EMR to Assume",
+            "Parameters": {
+                "EmrJobFlowRole": "${EmrSilverJobFlowRole}"
+            },
+            "ResultPath": "$.lambda.emr_role",
+            "Next": "LaunchEMR"
+        },
+        "PassGold": {
+            "Type": "Pass",
+            "Comment": "Pass the gold role for EMR to Assume",
+            "Parameters": {
+                "EmrJobFlowRole": "${EmrGoldJobFlowRole}"
+            },
+            "ResultPath": "$.lambda.emr_role",
+            "Next": "LaunchEMR"
+        },
         "LaunchEMR": {
             "Type": "Task",
             "Resource": "arn:aws:states:::elasticmapreduce:createCluster.sync",
@@ -23,7 +67,7 @@
                     { "Name": "Spark" }
                 ],
                 "ServiceRole": "${EmrServiceRole}",
-                "JobFlowRole": "${EmrJobFlowRole}",
+                "JobFlowRole.$": "$.emr_role.EmrJobFlowRole",
                 "LogUri": "${EmrLogUri}",
                 "StepConcurrencyLevel.$": "$.pipeline.emr_config.step_parallelism",
                 "BootstrapActions": [

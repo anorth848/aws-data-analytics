@@ -40,9 +40,14 @@ def main():
     #  Check to see if the target denormalized table exists, if it does, grab the max hudi instant time from the previous load
     try:
         client = boto3.client('glue')
-        client.get_table(DatabaseName=db_name, Name='analytics_order_line')
-        spark.read.format('org.apache.hudi').load(os.path.join(target_location_uri, 'analytics_order_line', ''))\
+        client.get_table(DatabaseName=db_name, Name='order_line_dn')
+
+        hudi_options = {
+            'hoodie.datasource.query.type': 'snapshot'
+        }
+        spark.read.format('org.apache.hudi').options(**hudi_options).load(os.path.join(target_location_uri, 'order_line_dn', ''))\
             .createOrReplaceTempView('aol')
+
         instant_time = spark.sql('''
             SELECT date_format(MAX(ol_instant_time), 'yyyyMMddHHmmss') as instant_time FROM aol
             ''').collect()[0][0]
@@ -54,7 +59,7 @@ def main():
         if type(e).__name__ == 'EntityNotFoundException':
             dn_table_exists = False
             instant_time = None
-            logging.warning('Table analytics_order_line does not exist')
+            logging.warning('Table order_line_dn does not exist')
         else:
             raise
 
@@ -76,6 +81,7 @@ def main():
             hudi_options = {
                 'hoodie.datasource.query.type': 'snapshot'
             }
+
         spark.read.format('org.apache.hudi').options(**hudi_options).load(os.path.join(source_location_uri, table, ''))\
             .createOrReplaceTempView(table)
 
@@ -130,24 +136,27 @@ def main():
     ''')
 
     hudi_conf = {
+        'hoodie.datasource.write.table.type': 'MERGE_ON_READ',
         'hoodie.clustering.inline': 'true',
+        'hoodie.clustering.async.enabled': 'true',
+        'hoodie.datasource.clustering.async.enable': 'true',
         'hoodie.archive.merge.enable': 'true',
-        'hoodie.table.name': 'analytics_order_line',
+        'hoodie.table.name': 'order_line_dn',
         'hoodie.datasource.write.recordkey.field': 'aol_sk,ol_number',
         'hoodie.datasource.write.precombine.field': 'ol_instant_time',
         'hoodie.datasource.write.partitionpath.field': 'order_date',
         'hoodie.datasource.write.keygenerator.class': 'org.apache.hudi.keygen.ComplexKeyGenerator',
         'hoodie.datasource.hive_sync.database': db_name,
         'hoodie.datasource.hive_sync.enable': 'true',
-        'hoodie.datasource.hive_sync.table': 'analytics_order_line',
+        'hoodie.datasource.hive_sync.table': 'order_line_dn',
         'hoodie.datasource.hive_sync.partition_extractor_class': 'org.apache.hudi.hive.SlashEncodedDayPartitionValueExtractor',
-        'hoodie.datasource.hive_sync.table_properties': f'Lineage={json.dumps(source_tables_dict)}'
+        'hoodie.datasource.hive_sync.table_properties': f'Lineage={json.dumps(source_tables_dict)}',
     }
 
     if dn_table_exists is False:
         hudi_conf['hoodie.datasource.write.operation'] = 'bulk_insert'
         hudi_conf['hoodie.bulkinsert.sort.mode'] = 'PARTITION_SORT'
-        hudi_conf['hoodie.bulkinsert.shuffle.parallelism'] = '32'
+        hudi_conf['hoodie.bulkinsert.shuffle.parallelism'] = '256'
 
         writer = df.write.format('org.apache.hudi').mode('overwrite')
     else:
@@ -156,13 +165,15 @@ def main():
         hudi_conf['hoodie.cleaner.commits.retained'] = '5'
         hudi_conf['hoodie.clean.automatic'] = 'true'
         hudi_conf['hoodie.clean.max.commits'] = '2'
+        hudi_conf['hoodie.clean.async'] = 'true'
         hudi_conf['hoodie.keep.min.commits'] = '10'
         hudi_conf['hoodie.keep.max.commits'] = '15'
+        hudi_conf['hoodie.datasource.compaction.async.enable'] = 'true'
 
         writer = df.write.format('org.apache.hudi').mode('append')
 
     writer.options(**hudi_conf)\
-        .save(os.path.join(target_location_uri, 'analytics_order_line', ''))
+        .save(os.path.join(target_location_uri, 'order_line_dn', ''))
 
 
 if __name__ == '__main__':

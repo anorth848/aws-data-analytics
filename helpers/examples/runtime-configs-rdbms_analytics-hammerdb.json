@@ -81,12 +81,12 @@
             "step_parallelism": 4
         },
         "next_pipeline": {
-            "pipeline_type": "denormalize",
+            "pipeline_type": "consumption",
             "enabled": true
         }
     },
     {
-        "config": "pipeline::custom::denormalize",
+        "config": "pipeline::custom::consumption",
         "identifier": "rdbms_analytics",
         "allowed_concurrent": ["jdbc_load"],
         "emr_config": {
@@ -103,7 +103,7 @@
         }
     },
     {
-        "config": "step::denormalize::denormalize_order_line",
+        "config": "step::consumption::denormalize_order_line",
         "identifier": "rdbms_analytics",
         "enabled": true,
         "entrypoint": [

@@ -75,6 +75,75 @@ Resources:
       VersioningConfiguration:
         Status: Enabled
 
+  BronzeLakeCrawlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "glue.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole" ]
+          }
+        ]
+      }
+      Description: Role for Bronze Glue Crawler
+      MaxSessionDuration: 43200
+      Policies:
+        - PolicyName: FullLoadPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: ResourceStar
+                Effect: Allow
+                Action:
+                  - glue:*
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                  - s3:ListAllMyBuckets
+                  - s3:GetBucketAcl
+                  - ec2:DescribeVpcEndpoints
+                  - ec2:DescribeRouteTables
+                  - ec2:CreateNetworkInterface
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeVpcAttribute
+                  - iam:ListRolePolicies
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - cloudwatch:PutMetricData
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Sid: BronzeLake
+                Effect: Allow
+                Action:
+                  - s3:List*
+                  - s3:*Object*
+                Resource:
+                  - !Join [ '', [ !GetAtt BronzeLakeBucket.Arn , '/', !Ref GlueDatabase ] ]
+                  - !Join [ '', [ !GetAtt BronzeLakeBucket.Arn , '/', !Ref GlueDatabase, '/' ] ]
+                  - !Join [ '', [ !GetAtt BronzeLakeBucket.Arn , '/', !Ref GlueDatabase, '/*' ] ]
+              - Sid: Tags
+                Effect: Allow
+                Action:
+                  - ec2:CreateTags
+                  - ec2:DeleteTags
+                Resource:
+                  - "arn:aws:ec2:*:*:network-interface/*"
+                  - "arn:aws:ec2:*:*:security-group/*"
+                  - "arn:aws:ec2:*:*:instance/*"
+                Condition:
+                  ForAllValues:StringEquals:
+                    aws:TagKeys:
+                      - 'aws-glue-service-resource'
+
   GoldLakeBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -188,6 +257,98 @@ Resources:
       # ServiceLinkedRole does not properly delete using CloudFormation so using a traditional IAM role
       UseServiceLinkedRole: FALSE
       RoleArn: !GetAtt LakeFormationLocationRole.Arn
+
+  BronzeCrawlerLakeDbPermissions:
+    Type: AWS::LakeFormation::Permissions
+    DependsOn: BronzeLakeCrawlerRole
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !GetAtt BronzeLakeCrawlerRole.Arn
+      Permissions:
+        - ALL
+      Resource:
+        DatabaseResource:
+          CatalogId: !Ref AWS::AccountId
+          Name: !Ref GlueDatabase
+
+  BronzeCrawlerLakeTablePermissions:
+    Type: AWS::LakeFormation::Permissions
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !GetAtt BronzeLakeCrawlerRole.Arn
+      Permissions:
+        - ALL
+      Resource:
+        TableResource:
+          CatalogId: !Ref AWS::AccountId
+          DatabaseName: !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
+          TableWildcard: { }
+
+  BronzeCrawlerLakeLocationPermissions:
+    Type: AWS::LakeFormation::Permissions
+    Properties:
+      DataLakePrincipal:
+        DataLakePrincipalIdentifier: !GetAtt BronzeLakeCrawlerRole.Arn
+      Permissions:
+        - DATA_LOCATION_ACCESS
+      Resource:
+        DataLocationResource:
+          CatalogId: !Ref AWS::AccountId
+          S3Resource: !Join [ '', [ !GetAtt BronzeLakeBucket.Arn , '/', !Ref GlueDatabase ] ]
+
+  GlueVpcConnection:
+    Type: AWS::Glue::Connection
+    Properties:
+      CatalogId: !Sub '${AWS::AccountId}'
+      ConnectionInput:
+        ConnectionProperties: { "JDBC_ENFORCE_SSL": "true" }
+        ConnectionType: NETWORK
+        Description: Private Connection for Glue Crawler to use VPC Endpoint while crawling
+        PhysicalConnectionRequirements:
+          AvailabilityZone: !Sub '${AWS::Region}a'
+          SubnetId: !Sub '{{resolve:ssm:/${ParentStack}/network/subnet/a/id}}'
+          SecurityGroupIdList:
+            - !Sub '{{resolve:ssm:/${ParentStack}/network/vpc/defaultsg}}'
+
+  CrawlerBronzeLakeFull:
+    Type: AWS::Glue::Crawler
+    Properties:
+      DatabaseName: !Ref GlueDatabase
+      Role: !Ref BronzeLakeCrawlerRole
+      Description: Bronze Datalake crawler - full load datasets
+      TablePrefix: bronze_full_
+      Schedule:
+        ScheduleExpression: cron(00 05 * * ? *)
+      SchemaChangePolicy:
+        DeleteBehavior: LOG
+        UpdateBehavior: LOG
+      Targets:
+        S3Targets:
+          - Path: !Join ['', ['s3://', !Ref BronzeLakeBucket, '/', !Ref GlueDatabase, '/full/' ]]
+            ConnectionName: !Ref GlueVpcConnection
+            Exclusions: [ '**_SUCCESS' ]
+            SampleSize: 10
+
+  CrawlerBronzeLakeIncremental:
+    Type: AWS::Glue::Crawler
+    Properties:
+      DatabaseName: !Ref GlueDatabase
+      Role: !Ref BronzeLakeCrawlerRole
+      Description: Bronze Datalake crawler - incremental load datasets
+      TablePrefix: bronze_incr_
+      Schedule:
+        ScheduleExpression: cron(15 05 * * ? *)
+#      RecrawlPolicy:
+#        RecrawlBehavior: CRAWL_NEW_FOLDERS_ONLY
+      SchemaChangePolicy:
+        DeleteBehavior: LOG
+        UpdateBehavior: LOG
+      Targets:
+        S3Targets:
+          - Path: !Join ['', ['s3://', !Ref BronzeLakeBucket, '/', !Ref GlueDatabase, '/incremental/' ]]
+            ConnectionName: !Ref GlueVpcConnection
+            Exclusions: [ '**_SUCCESS', '*/control_tables/**' ]
+            SampleSize: 10
 
   CatalogParameter:
     Type: AWS::SSM::Parameter

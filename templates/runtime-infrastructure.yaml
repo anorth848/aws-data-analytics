@@ -64,12 +64,46 @@ Resources:
     Properties:
       DisplayName: !Sub '${ParentStack}-Runtime-SNS'
 
+  RuntimeSnsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Sid: AllowServices
+            Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+                - cloudwatch.amazonaws.com
+            Action: 'sns:Publish'
+            Resource:
+              - !Ref RuntimeSnsTopic
+      Topics:
+        - !Ref RuntimeSnsTopic
+
   RuntimeSnsOpsSubscription:
     Type: AWS::SNS::Subscription
     Properties:
       Endpoint: !Ref OpsEmailAddress
       Protocol: email
       TopicArn: !Ref RuntimeSnsTopic
+
+  DetectEmrStepFailures:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Detect EMR Step failures and notify
+      EventPattern:
+        {
+          "source": [ "aws.emr" ],
+          "detail-type": [ "EMR Step Status Change" ],
+          "detail": {
+            "state": [ "FAILED", "CANCELLED" ]
+          }
+        }
+      State: ENABLED
+      Targets:
+        - Arn: !Ref RuntimeSnsTopic
+          Id: RuntimeSnsTopic
 
   SourceConfigTableNameParameter:
     Type: AWS::SSM::Parameter
