@@ -181,6 +181,14 @@ Resources:
         Description: Data Lake database
         Name: !Ref UseCase
 
+  GlueDatabaseBronze:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Description: Data Lake database for raw data
+        Name: !Sub '${UseCase}_bronze'
+
   LakeFormationLocationRole:
     Type: AWS::IAM::Role
     DependsOn: [ GlueDatabase ]
@@ -269,7 +277,7 @@ Resources:
       Resource:
         DatabaseResource:
           CatalogId: !Ref AWS::AccountId
-          Name: !Ref GlueDatabase
+          Name: !Ref GlueDatabaseBronze
 
   BronzeCrawlerLakeTablePermissions:
     Type: AWS::LakeFormation::Permissions
@@ -281,7 +289,7 @@ Resources:
       Resource:
         TableResource:
           CatalogId: !Ref AWS::AccountId
-          DatabaseName: !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
+          DatabaseName: !Ref GlueDatabaseBronze
           TableWildcard: { }
 
   BronzeCrawlerLakeLocationPermissions:
@@ -313,10 +321,10 @@ Resources:
   CrawlerBronzeLakeFull:
     Type: AWS::Glue::Crawler
     Properties:
-      DatabaseName: !Ref GlueDatabase
+      DatabaseName: !Ref GlueDatabaseBronze
       Role: !Ref BronzeLakeCrawlerRole
       Description: Bronze Datalake crawler - full load datasets
-      TablePrefix: bronze_full_
+      TablePrefix: full_
       Schedule:
         ScheduleExpression: cron(00 05 * * ? *)
       SchemaChangePolicy:
@@ -332,14 +340,12 @@ Resources:
   CrawlerBronzeLakeIncremental:
     Type: AWS::Glue::Crawler
     Properties:
-      DatabaseName: !Ref GlueDatabase
+      DatabaseName: !Ref GlueDatabaseBronze
       Role: !Ref BronzeLakeCrawlerRole
       Description: Bronze Datalake crawler - incremental load datasets
-      TablePrefix: bronze_incr_
+      TablePrefix: incr_
       Schedule:
         ScheduleExpression: cron(15 05 * * ? *)
-#      RecrawlPolicy:
-#        RecrawlBehavior: CRAWL_NEW_FOLDERS_ONLY
       SchemaChangePolicy:
         DeleteBehavior: LOG
         UpdateBehavior: LOG

@@ -98,9 +98,7 @@ def main():
             o_entry_d,
             date_format(o_entry_d, 'yyyy/MM/dd') as order_date,
             i_id,
-            c_first || ' ' || c_middle || ' ' || c_last as full_name,
             c_zip,
-            c_phone,
             c_credit,
             c_credit_lim,
             c_discount,
@@ -172,8 +170,11 @@ def main():
 
         writer = df.write.format('org.apache.hudi').mode('append')
 
+    table_uri = os.path.join(target_location_uri, 'order_line_dn', '')
+    logging.info(f'Writing denormalized order_line hudi table to {table_uri}')
+
     writer.options(**hudi_conf)\
-        .save(os.path.join(target_location_uri, 'order_line_dn', ''))
+        .save(os.path.join(table_uri)
 
 
 if __name__ == '__main__':

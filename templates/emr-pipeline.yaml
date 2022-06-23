@@ -83,6 +83,9 @@ Resources:
               - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/bronze/arn}}/${UseCase}/*'
               - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/silver/arn}}/${UseCase}/*'
               - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/gold/arn}}/${UseCase}/*'
+              - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/bronze/arn}}/${UseCase}*'
+              - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/silver/arn}}/${UseCase}*'
+              - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/gold/arn}}/${UseCase}*'
           - Sid: GlueAccountLevel
             Effect: Allow
             Action:
@@ -304,7 +307,7 @@ Resources:
         DataLocationResource:
           CatalogId: !Ref AWS::AccountId
           S3Resource: !Join [ "/", [
-            !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/gold/arn}}',
+            !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/silver/arn}}',
             !Sub '{{resolve:ssm:/${ParentStack}/lake/glue/db/name}}'
           ] ]
 
