@@ -231,11 +231,12 @@ Once the above installation and configuration is complete, you are ready to star
 
 #### Enable the system and load the data lake
 
+- Start the CDC replication task created previously, this must be done before the next step or there will be missing data
 - Enabled the full load
-  - `make STACK_NAME=hudi-lake REGION=us-east-1 enable_full`
-  - This will enable the full load schedule, which runs every 7 days (from the time you enabled it)
+  - `make STACK_NAME=hudi-lake REGION=us-east-1 enable_jdbc`
+  - This will enable the full load EventBridge schedule, which runs every 7 days (from the time you enabled it)
   - The reason this runs every 7 days is to make recovery in the event of a failure faster
-- Assuming you have next_pipeline configured in your pipeline::config::<pipeline_type> dynamodb config entries EG:
+- Assuming you have next_pipeline configured in your `pipeline::system::jdbc_load` dynamodb config entries EG:
   - ```
       "next_pipeline": {
         "pipeline_type": "seed_hudi",
@@ -251,12 +252,12 @@ Once the above installation and configuration is complete, you are ready to star
 Once the Datalake has been created, and the Hudi tables populated, you are ready to apply incremental updates.   
 Incremental updates leverage [Hudi's DeltaStreamer in either Run Once or Continuous modes](https://hudi.apache.org/docs/deployment/#deltastreamer)
 
-##### Run Once Mode (scheduled incrementals)
+##### Run Once Mode (scheduled incremental)
 If your requirements allow a scheduled incremental update, enable the incremental schedule
 - This will apply incremental changes to your hudi tables based on the schedule you defined in stack parameter `IncrementalSchedule`
 - `make STACK_NAME=hudi-lake REGION=us-east-1 enable_incremental`   
 
-##### Continuous mode (long-running EMR cluster)
+##### Continuous mode (Experimental) (long-running EMR cluster)
 If you would like to apply incremental updates continuously, pipeline::config::incremental_hudi.next_pipeline should be cofigured
 ```
 "next_pipeline": {

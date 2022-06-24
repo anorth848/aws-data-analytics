@@ -89,12 +89,15 @@ def get_hudi_configs(source_table_name, target_table_name, database_name, table_
     glue_database = database_name
 
     hudi_conf = {
+        'hoodie.clustering.inline': 'true',
+        'hoodie.archive.merge.enable': 'true',
         'hoodie.table.name': target_table_name,
         'hoodie.datasource.write.recordkey.field': primary_key,
         'hoodie.datasource.write.precombine.field': precombine_field,
         'hoodie.datasource.hive_sync.database': glue_database,
         'hoodie.datasource.hive_sync.enable': 'true',
-        'hoodie.datasource.hive_sync.table': target_table_name
+        'hoodie.datasource.hive_sync.table': target_table_name,
+        'hoodie.datasource.clustering.inline.enable': 'true'
     }
 
     if pipeline_type == 'seed_hudi':
@@ -104,6 +107,10 @@ def get_hudi_configs(source_table_name, target_table_name, database_name, table_
     elif pipeline_type in ['incremental_hudi', 'continuous_hudi']:
         source_s3uri = os.path.join(bronze_lake_uri, 'incremental', target_table_name.replace('_', '/', 2), '')
         hudi_conf['hoodie.datasource.write.operation'] = 'upsert'
+        hudi_conf['hoodie.cleaner.commits.retained'] = '5'
+        hudi_conf['hoodie.clean.automatic'] = 'true'
+        hudi_conf['hoodie.keep.min.commits'] = '10'
+        hudi_conf['hoodie.keep.max.commits'] = '15'
     else:
         raise ValueError(f'Operation {pipeline_type} not yet supported.')
 
@@ -123,6 +130,9 @@ def get_hudi_configs(source_table_name, target_table_name, database_name, table_
             key_generator = 'org.apache.hudi.keygen.SimpleKeyGenerator'
 
     hudi_conf['hoodie.datasource.write.keygenerator.class'] = key_generator
+
+    if 'table_type' in table_config and table_config['table_type'] == 'MERGE_ON_READ':
+        hudi_conf['hoodie.compact.inline'] = 'true'
 
     if 'transformer_sql' in table_config:
         hudi_conf['hoodie.deltastreamer.transformer.sql'] = table_config['transformer_sql']
@@ -172,18 +182,23 @@ def generate_system_steps(configs, pipeline_type):
                 spark_submit_args.extend([
                     '--class', 'org.apache.hudi.utilities.deltastreamer.HoodieDeltaStreamer',
                     '/usr/lib/hudi/hudi-utilities-bundle.jar',
-                    '--table-type', 'COPY_ON_WRITE',
                     '--source-class', 'org.apache.hudi.utilities.sources.ParquetDFSSource',
-                    '--enable-hive-sync',
+                    '--enable-sync',
                     '--target-table', target_table_name,
                     '--target-base-path', os.path.join(silver_lake_uri, target_table_name, ''),
                     '--source-ordering-field', config['hudi_config']['watermark']
                 ])
 
+                if 'table_type' in config['hudi_config']:
+                    table_type = config['hudi_config']['table_type']
+                else:
+                    table_type = 'COPY_ON_WRITE'
+                spark_submit_args.extend(['--table-type', table_type])
+
                 if 'transformer_class' in config['hudi_config']:
                     spark_submit_args.extend(['--transformer-class', config['hudi_config']['transformer_class']])
 
-                if pipeline_type == 'seed_hudi':
+                if pipeline_type == 'seed_hudi' or 'op' in config['hudi_config']:
                     spark_submit_args.extend(['--op', 'BULK_INSERT'])
 
                 hudi_configs = get_hudi_configs(source_table_name, target_table_name, target_db_name,

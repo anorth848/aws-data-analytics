@@ -19,8 +19,11 @@ Resources:
           - Sid: "Data-access-to-specific-VPCE"
             Principal: "*"
             Action:
-              - "s3:GetObject*"
-              - "s3:PutObject*"
+              - "s3:GetObject"
+              - "s3:GetObjectVersion"
+              - "s3:GetObjectTorrent"
+              - "s3:GetObjectVersionTorrent"
+              - "s3:PutObject"
             Effect: "Deny"
             Resource:
               - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/silver/arn}}/*'
@@ -42,8 +45,11 @@ Resources:
           - Sid: "Deny-non-VPCE-data-access"
             Principal: "*"
             Action:
-              - "s3:GetObject*"
-              - "s3:PutObject*"
+              - "s3:GetObject"
+              - "s3:GetObjectVersion"
+              - "s3:GetObjectTorrent"
+              - "s3:GetObjectVersionTorrent"
+              - "s3:PutObject"
             Effect: "Deny"
             Resource:
               - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/bronze/arn}}/*'
@@ -70,8 +76,11 @@ Resources:
           - Sid: "Data-access-to-specific-VPCE"
             Principal: "*"
             Action:
-              - "s3:GetObject*"
-              - "s3:PutObject*"
+              - "s3:GetObject"
+              - "s3:GetObjectVersion"
+              - "s3:GetObjectTorrent"
+              - "s3:GetObjectVersionTorrent"
+              - "s3:PutObject"
             Effect: "Deny"
             Resource:
               - !Sub '{{resolve:ssm:/${ParentStack}/lake/bucket/gold/arn}}/*'

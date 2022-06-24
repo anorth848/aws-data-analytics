@@ -1,12 +1,19 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Generic replication task which includes $AR_H_CHANGE_SEQ column
+  Generic replication task for hammerdb database which includes $AR_H_CHANGE_SEQ column
+
+##  NOTE ##
+##  This replication task template is specific for hammerdb database with a partitioned order_line table
+##  Modify as necessary for other use cases
+##  Because of this, this stack is manually created after everything else and is not part of the parent/nested stacks
+##  Once created, ensure the DMS Endpoint has proper credentials and then test the connection using the replication
+##  instance created in this stack
 
 Parameters:
   UseCase:
     Type: String
     AllowedPattern: "[a-z_]+"
-    Default: rdbms_analytics
+    Default: mda_demo
 
   ParentStack:
     Type: String

@@ -40,9 +40,14 @@ def main():
     #  Check to see if the target denormalized table exists, if it does, grab the max hudi instant time from the previous load
     try:
         client = boto3.client('glue')
-        client.get_table(DatabaseName=db_name, Name='analytics_order_line')
-        spark.read.format('org.apache.hudi').load(os.path.join(target_location_uri, 'analytics_order_line', ''))\
+        client.get_table(DatabaseName=db_name, Name='order_line_dn')
+
+        hudi_options = {
+            'hoodie.datasource.query.type': 'snapshot'
+        }
+        spark.read.format('org.apache.hudi').options(**hudi_options).load(os.path.join(target_location_uri, 'order_line_dn', ''))\
             .createOrReplaceTempView('aol')
+
         instant_time = spark.sql('''
             SELECT date_format(MAX(ol_instant_time), 'yyyyMMddHHmmss') as instant_time FROM aol
             ''').collect()[0][0]
@@ -54,13 +59,17 @@ def main():
         if type(e).__name__ == 'EntityNotFoundException':
             dn_table_exists = False
             instant_time = None
-            logging.warning('Table analytics_order_line does not exist')
+            logging.warning('Table order_line_dn does not exist')
         else:
             raise
 
+    source_tables = ['hammerdb_public_orders','hammerdb_public_customer', 'hammerdb_public_district',
+                   'hammerdb_public_warehouse', 'hammerdb_public_item', 'hammerdb_public_order_line']
+
+    source_tables_dict = {"SourceTables": source_tables}
+
     # Register tables as temporary views
-    for table in ['hammerdb_public_orders','hammerdb_public_customer', 'hammerdb_public_district',
-                   'hammerdb_public_warehouse', 'hammerdb_public_item', 'hammerdb_public_order_line']:
+    for table in source_tables:
 
         # We are using snapshot reads for dimension tables and incremental for order_line (if possible)
         if dn_table_exists is True and table == 'hammerdb_public_order_line':
@@ -72,6 +81,7 @@ def main():
             hudi_options = {
                 'hoodie.datasource.query.type': 'snapshot'
             }
+
         spark.read.format('org.apache.hudi').options(**hudi_options).load(os.path.join(source_location_uri, table, ''))\
             .createOrReplaceTempView(table)
 
@@ -88,9 +98,7 @@ def main():
             o_entry_d,
             date_format(o_entry_d, 'yyyy/MM/dd') as order_date,
             i_id,
-            c_first || ' ' || c_middle || ' ' || c_last as full_name,
             c_zip,
-            c_phone,
             c_credit,
             c_credit_lim,
             c_discount,
@@ -125,33 +133,48 @@ def main():
         ORDER BY aol_sk, ol_number, ol_instant_time
     ''')
 
-    # If we are doing a full load because the table doesn't exist, persist it.. we'll need it for aggregation step as well
-    if dn_table_exists is False:
-        df.persist()
-
     hudi_conf = {
-        'hoodie.table.name': 'analytics_order_line',
+        'hoodie.datasource.write.table.type': 'MERGE_ON_READ',
+        'hoodie.clustering.inline': 'true',
+        'hoodie.clustering.async.enabled': 'true',
+        'hoodie.datasource.clustering.async.enable': 'true',
+        'hoodie.archive.merge.enable': 'true',
+        'hoodie.table.name': 'order_line_dn',
         'hoodie.datasource.write.recordkey.field': 'aol_sk,ol_number',
         'hoodie.datasource.write.precombine.field': 'ol_instant_time',
         'hoodie.datasource.write.partitionpath.field': 'order_date',
         'hoodie.datasource.write.keygenerator.class': 'org.apache.hudi.keygen.ComplexKeyGenerator',
         'hoodie.datasource.hive_sync.database': db_name,
         'hoodie.datasource.hive_sync.enable': 'true',
-        'hoodie.datasource.hive_sync.table': 'analytics_order_line',
-        'hoodie.datasource.hive_sync.partition_extractor_class': 'org.apache.hudi.hive.SlashEncodedDayPartitionValueExtractor'
+        'hoodie.datasource.hive_sync.table': 'order_line_dn',
+        'hoodie.datasource.hive_sync.partition_extractor_class': 'org.apache.hudi.hive.SlashEncodedDayPartitionValueExtractor',
+        'hoodie.datasource.hive_sync.table_properties': f'Lineage={json.dumps(source_tables_dict)}',
     }
+
     if dn_table_exists is False:
         hudi_conf['hoodie.datasource.write.operation'] = 'bulk_insert'
         hudi_conf['hoodie.bulkinsert.sort.mode'] = 'PARTITION_SORT'
-        hudi_conf['hoodie.bulkinsert.shuffle.parallelism'] = '32'
+        hudi_conf['hoodie.bulkinsert.shuffle.parallelism'] = '256'
+
         writer = df.write.format('org.apache.hudi').mode('overwrite')
     else:
         hudi_conf['hoodie.datasource.write.operation'] = 'upsert'
-        hudi_conf['hoodie.upsert.shuffle.parallelism'] = '32'
+        hudi_conf['hoodie.upsert.shuffle.parallelism'] = '256'
+        hudi_conf['hoodie.cleaner.commits.retained'] = '5'
+        hudi_conf['hoodie.clean.automatic'] = 'true'
+        hudi_conf['hoodie.clean.max.commits'] = '2'
+        hudi_conf['hoodie.clean.async'] = 'true'
+        hudi_conf['hoodie.keep.min.commits'] = '10'
+        hudi_conf['hoodie.keep.max.commits'] = '15'
+        hudi_conf['hoodie.datasource.compaction.async.enable'] = 'true'
+
         writer = df.write.format('org.apache.hudi').mode('append')
 
+    table_uri = os.path.join(target_location_uri, 'order_line_dn', '')
+    logging.info(f'Writing denormalized order_line hudi table to {table_uri}')
+
     writer.options(**hudi_conf)\
-        .save(os.path.join(target_location_uri, 'analytics_order_line', ''))
+        .save(os.path.join(table_uri)
 
 
 if __name__ == '__main__':
